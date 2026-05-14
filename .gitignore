@@ -1,0 +1,57 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / TypeScript ---
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+*.tsbuildinfo
+.npm/
+.yarn/
+
+# --- Editors ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Env / secrets ---
+.env
+.env.local
+.env.*.local
+*.pem
+secrets/
+
+# --- Data / artifacts ---
+data/raw/
+data/processed/
+*.duckdb
+*.sqlite
+*.parquet
+traces/
+checkpoints/
+wandb/
+logs/
+
+# --- OS ---
+Thumbs.db
+
+# --- Local notes (private) ---
+SCRATCH.md
+NOTES.md
