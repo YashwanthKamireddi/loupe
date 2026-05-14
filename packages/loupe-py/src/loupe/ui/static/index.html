@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Loupe · the magnifying glass for your AI agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@1,400;1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+  rel="stylesheet"
+/>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◉</span>
+      <span class="brand-name">LOUPE</span>
+      <span class="brand-sub">forensics for ai agents</span>
+    </div>
+    <div class="meta" id="trace-summary"></div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="dim">case files</span>
+        <span class="dim" id="trace-count"></span>
+      </div>
+      <ul class="trace-list" id="trace-list"></ul>
+    </aside>
+
+    <section class="viewer" id="viewer">
+      <div class="empty-state">
+        <h1 class="empty-title">Inspect agent runs.</h1>
+        <p class="empty-sub">Select a case file from the left.</p>
+      </div>
+    </section>
+  </main>
+
+  <template id="trace-view-tmpl">
+    <div class="trace-view">
+      <div class="timeline-wrap">
+        <div class="timeline-axis"></div>
+        <div class="timeline" data-track></div>
+      </div>
+      <div class="panes">
+        <div class="pane pane-steps">
+          <header class="pane-h">steps</header>
+          <ol class="step-list" data-steps></ol>
+        </div>
+        <div class="pane pane-detail">
+          <header class="pane-h">evidence</header>
+          <div class="detail" data-detail>
+            <p class="dim">Select a step to inspect.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

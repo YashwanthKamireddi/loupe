@@ -1,7 +1,9 @@
 """`loupe` CLI entry point.
 
-Today: `loupe list` and `loupe show <trace-id>`.
-Soon: `loupe ui` to launch a local dashboard.
+Commands:
+    loupe list                       List all traces stored locally
+    loupe show <trace-id>            Print step-by-step content of one trace
+    loupe ui [--port 7860]           Launch the local web dashboard
 """
 
 from __future__ import annotations
@@ -89,6 +91,27 @@ def show_trace(trace_id: str) -> None:
                 f"  [dim]{obj['kind']:>10}[/dim]  [bold]{obj['name']}[/bold]"
                 + (f"  [red]{obj['error']}[/red]" if obj.get("error") else "")
             )
+
+
+@app.command("ui")
+def ui(
+    host: str = typer.Option("127.0.0.1", help="Bind host"),
+    port: int = typer.Option(7860, help="Bind port"),
+) -> None:
+    """Launch the local web dashboard (FastAPI + uvicorn)."""
+    try:
+        import uvicorn
+
+        from loupe.ui.server import create_app
+    except ImportError:
+        console.print(
+            "[red]loupe ui needs fastapi + uvicorn.[/red] "
+            "Install with: pip install 'loupe[ui]'"
+        )
+        raise typer.Exit(code=1) from None
+
+    console.print(f"[cyan]loupe[/cyan] [bold]ui[/bold]  ·  http://{host}:{port}")
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
 
 
 def _read_header(path: Path) -> dict | None:
