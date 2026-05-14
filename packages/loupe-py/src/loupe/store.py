@@ -25,7 +25,7 @@ def _default_dir() -> Path:
 class Store(Protocol):
     """Anything that can persist a Trace."""
 
-    def save(self, trace: "Trace") -> None: ...
+    def save(self, trace: Trace) -> None: ...
 
 
 class JSONLStore:
@@ -40,7 +40,7 @@ class JSONLStore:
         self.root = root or (_default_dir() / "traces")
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def save(self, trace: "Trace") -> None:
+    def save(self, trace: Trace) -> None:
         path = self.root / f"{trace.trace_id}.jsonl"
         with path.open("w", encoding="utf-8") as f:
             header: dict[str, Any] = dataclasses.asdict(trace)

@@ -15,7 +15,7 @@ import functools
 import inspect
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar

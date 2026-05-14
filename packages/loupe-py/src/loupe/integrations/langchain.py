@@ -17,6 +17,7 @@ runnable that fires LangChain callbacks.
 
 from __future__ import annotations
 
+import contextlib
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -87,12 +88,10 @@ class LoupeCallbackHandler(BaseCallbackHandler):
             inputs={"messages": flat},
         )
 
-    def on_llm_end(self, response: "LLMResult", *, run_id: uuid.UUID, **kwargs: Any) -> None:
+    def on_llm_end(self, response: LLMResult, *, run_id: uuid.UUID, **kwargs: Any) -> None:
         outputs: dict[str, Any] = {}
-        try:
+        with contextlib.suppress(AttributeError, IndexError):
             outputs["text"] = response.generations[0][0].text
-        except (AttributeError, IndexError):
-            pass
         if getattr(response, "llm_output", None):
             outputs["llm_output"] = response.llm_output
         self._close(run_id, outputs=outputs)
@@ -154,7 +153,7 @@ class LoupeCallbackHandler(BaseCallbackHandler):
 
     def on_agent_action(
         self,
-        action: "AgentAction",
+        action: AgentAction,
         *,
         run_id: uuid.UUID,
         parent_run_id: uuid.UUID | None = None,
@@ -178,7 +177,7 @@ class LoupeCallbackHandler(BaseCallbackHandler):
 
     def on_agent_finish(
         self,
-        finish: "AgentFinish",
+        finish: AgentFinish,
         *,
         run_id: uuid.UUID,
         parent_run_id: uuid.UUID | None = None,
