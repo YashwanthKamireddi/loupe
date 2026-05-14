@@ -14,6 +14,14 @@ Traces are written to ~/.loupe/traces/ by default. View them with `loupe ui`.
 
 from loupe._version import __version__
 from loupe.store import Store
-from loupe.trace import Step, Trace, trace
+from loupe.trace import Step, Trace, current_trace, record_step, trace
 
-__all__ = ["__version__", "Step", "Store", "Trace", "trace"]
+__all__ = [
+    "__version__",
+    "Step",
+    "Store",
+    "Trace",
+    "current_trace",
+    "record_step",
+    "trace",
+]
