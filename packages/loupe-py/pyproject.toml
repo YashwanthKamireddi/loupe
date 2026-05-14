@@ -62,6 +62,10 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# typer/click idiomatically uses Option() as default; B008 doesn't apply here.
+"src/loupe/cli.py" = ["B008"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"

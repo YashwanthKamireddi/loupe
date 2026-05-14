@@ -1,20 +1,27 @@
 """`loupe` CLI entry point.
 
 Commands:
-    loupe list                       List all traces stored locally
-    loupe show <trace-id>            Print step-by-step content of one trace
-    loupe ui [--port 7860]           Launch the local web dashboard
+    loupe list                        List all traces stored locally
+    loupe show <trace-id>             Print step-by-step content of one trace
+    loupe ui [--port 7860]            Launch the local web dashboard
+    loupe tag <trace> <step> <cat>    Mark a step as a benchmark failure
+    loupe untag <trace> <step>        Remove a tag
+    loupe annotations <trace>         List tags on one trace
+    loupe export [--out FILE]         Bundle annotated failures into LoupeBench JSONL
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from loupe.annotation import Annotation, AnnotationStore
+from loupe.bench import export_jsonl
 from loupe.store import _default_dir
 
 app = typer.Typer(
@@ -38,12 +45,14 @@ def list_traces() -> None:
         console.print("[dim]No traces yet. Wrap a function with @trace.[/dim]")
         return
 
+    ann_store = AnnotationStore()
     table = Table(title="Loupe traces", show_lines=False)
     table.add_column("trace_id", style="cyan")
     table.add_column("name", style="bold")
     table.add_column("framework", style="dim")
     table.add_column("duration", justify="right")
     table.add_column("steps", justify="right")
+    table.add_column("tags", justify="right")
     table.add_column("status")
 
     for file in files[:50]:
@@ -58,12 +67,14 @@ def list_traces() -> None:
         )
         failed = header.get("metadata", {}).get("failed", False)
         status = "[red]failed[/red]" if failed else "[green]ok[/green]"
+        ann_count = len(ann_store.load(header["trace_id"]))
         table.add_row(
             header["trace_id"][:12],
             header["name"],
             header.get("framework") or "—",
             duration,
             str(steps),
+            str(ann_count) if ann_count else "[dim]—[/dim]",
             status,
         )
 
@@ -73,24 +84,17 @@ def list_traces() -> None:
 @app.command("show")
 def show_trace(trace_id: str) -> None:
     """Show the full step-by-step content of one trace."""
-    traces_dir = _default_dir() / "traces"
-    matches = list(traces_dir.glob(f"{trace_id}*.jsonl"))
-    if not matches:
-        console.print(f"[red]No trace matching {trace_id}[/red]")
+    path = _find_trace(trace_id)
+    if path is None:
         raise typer.Exit(code=1)
-    if len(matches) > 1:
-        console.print(f"[yellow]Multiple matches; picking {matches[0].stem}[/yellow]")
-
-    for line in matches[0].open():
+    for line in path.open():
         obj = json.loads(line)
         kind = obj.pop("_type")
         if kind == "trace":
             console.print(f"[bold cyan]Trace {obj['trace_id'][:12]}[/bold cyan] — {obj['name']}")
         else:
-            console.print(
-                f"  [dim]{obj['kind']:>10}[/dim]  [bold]{obj['name']}[/bold]"
-                + (f"  [red]{obj['error']}[/red]" if obj.get("error") else "")
-            )
+            err = f"  [red]{obj['error']}[/red]" if obj.get("error") else ""
+            console.print(f"  [dim]{obj['kind']:>10}[/dim]  [bold]{obj['name']}[/bold]{err}")
 
 
 @app.command("ui")
@@ -114,13 +118,132 @@ def ui(
     uvicorn.run(create_app(), host=host, port=port, log_level="warning")
 
 
+@app.command("tag")
+def tag(
+    trace_id: str,
+    step_id: str,
+    category: str = typer.Argument(
+        ..., help="Failure category, e.g. unguarded-delete, loop, hallucination"
+    ),
+    notes: str = typer.Option("", "--notes", "-n", help="Free-text root-cause notes"),
+    mitigation: str = typer.Option("", "--mitigation", "-m", help="What fixed it"),
+    severity: str = typer.Option("medium", "--severity", "-s", help="low|medium|high|critical"),
+    tags: list[str] = typer.Option(None, "--tag", "-t", help="Extra free-form tags (repeat)"),
+) -> None:
+    """Mark a step as a benchmark-worthy failure."""
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+    full_trace_id = path.stem
+
+    # Validate step exists
+    step_match = None
+    for line in path.open():
+        obj = json.loads(line)
+        if obj.get("_type") == "step" and obj.get("step_id", "").startswith(step_id):
+            step_match = obj["step_id"]
+            break
+    if step_match is None:
+        console.print(f"[red]No step matching {step_id} in trace {trace_id}[/red]")
+        raise typer.Exit(code=1)
+
+    annotator = os.environ.get("USER", "anon")
+    ann = Annotation(
+        trace_id=full_trace_id,
+        step_id=step_match,
+        failure_category=category,  # type: ignore[arg-type]
+        notes=notes,
+        mitigation=mitigation,
+        severity=severity,  # type: ignore[arg-type]
+        annotator=annotator,
+        tags=list(tags or []),
+    )
+    AnnotationStore().add(ann)
+    console.print(
+        f"[green]tagged[/green] {full_trace_id[:12]}/{step_match} "
+        f"as [bold]{category}[/bold]"
+    )
+
+
+@app.command("untag")
+def untag(trace_id: str, step_id: str) -> None:
+    """Remove the tag on a step."""
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+    full_trace_id = path.stem
+    # Resolve full step_id
+    full_step = step_id
+    for line in path.open():
+        obj = json.loads(line)
+        if obj.get("_type") == "step" and obj.get("step_id", "").startswith(step_id):
+            full_step = obj["step_id"]
+            break
+    removed = AnnotationStore().remove(full_trace_id, full_step)
+    if removed:
+        console.print(f"[green]untagged[/green] {full_trace_id[:12]}/{full_step}")
+    else:
+        console.print(f"[yellow]no tag found for[/yellow] {full_trace_id[:12]}/{full_step}")
+
+
+@app.command("annotations")
+def annotations(trace_id: str) -> None:
+    """List annotations on one trace."""
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+    full_trace_id = path.stem
+    items = AnnotationStore().load(full_trace_id)
+    if not items:
+        console.print("[dim]No annotations on this trace.[/dim]")
+        return
+    table = Table(title=f"Annotations · {full_trace_id[:12]}")
+    table.add_column("step_id", style="cyan")
+    table.add_column("category", style="bold")
+    table.add_column("severity")
+    table.add_column("notes", style="dim")
+    for a in items:
+        table.add_row(a.step_id[:12], a.failure_category, a.severity, a.notes or "—")
+    console.print(table)
+
+
+@app.command("export")
+def export(
+    out: Path = typer.Option(Path("loupe-bench.jsonl"), "--out", "-o", help="Output JSONL path"),
+    license_: str = typer.Option("CC-BY-4.0", "--license", help="License field on each record"),
+) -> None:
+    """Bundle all annotated failures into LoupeBench-compatible JSONL."""
+    count = export_jsonl(out, license=license_)
+    if count == 0:
+        console.print("[yellow]Nothing to export yet — tag some failures first.[/yellow]")
+        return
+    console.print(f"[green]exported[/green] {count} record(s) → [bold]{out}[/bold]")
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_trace(trace_id: str) -> Path | None:
+    traces_dir = _default_dir() / "traces"
+    matches = list(traces_dir.glob(f"{trace_id}*.jsonl"))
+    if not matches:
+        console.print(f"[red]No trace matching {trace_id}[/red]")
+        return None
+    if len(matches) > 1:
+        console.print(f"[yellow]Multiple matches; picking {matches[0].stem}[/yellow]")
+    return matches[0]
+
+
 def _read_header(path: Path) -> dict | None:
     try:
         with path.open() as f:
             first = json.loads(next(f))
-            assert first["_type"] == "trace"
-            return first
-    except (StopIteration, json.JSONDecodeError, KeyError, AssertionError):
+        if first.get("_type") != "trace":
+            return None
+        return first
+    except (StopIteration, json.JSONDecodeError, KeyError):
         return None
 
 

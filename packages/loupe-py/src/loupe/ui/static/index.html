@@ -19,6 +19,7 @@
       <span class="brand-name">LOUPE</span>
       <span class="brand-sub">forensics for ai agents</span>
     </div>
+    <div class="stats" id="stats"></div>
     <div class="meta" id="trace-summary"></div>
   </header>
 
@@ -28,13 +29,19 @@
         <span class="dim">case files</span>
         <span class="dim" id="trace-count"></span>
       </div>
+      <div class="search">
+        <input type="search" id="trace-search" placeholder="filter cases…" autocomplete="off" />
+      </div>
       <ul class="trace-list" id="trace-list"></ul>
     </aside>
 
     <section class="viewer" id="viewer">
       <div class="empty-state">
+        <div class="empty-mark">◉</div>
         <h1 class="empty-title">Inspect agent runs.</h1>
         <p class="empty-sub">Select a case file from the left.</p>
+        <pre class="empty-hint">$ pip install loupe
+$ loupe ui</pre>
       </div>
     </section>
   </main>
@@ -58,6 +65,50 @@
         </div>
       </div>
     </div>
+  </template>
+
+  <template id="tag-form-tmpl">
+    <form class="tag-form" data-tag-form>
+      <h3 class="tag-h">tag this step</h3>
+      <label>
+        <span>category</span>
+        <select data-cat>
+          <option value="unguarded-delete">unguarded-delete</option>
+          <option value="hallucination">hallucination</option>
+          <option value="loop">loop</option>
+          <option value="infinite-retry">infinite-retry</option>
+          <option value="tool-misuse">tool-misuse</option>
+          <option value="wrong-tool">wrong-tool</option>
+          <option value="context-loss">context-loss</option>
+          <option value="format-error">format-error</option>
+          <option value="security">security</option>
+          <option value="destructive-action">destructive-action</option>
+          <option value="off-task">off-task</option>
+          <option value="other">other</option>
+        </select>
+      </label>
+      <label>
+        <span>severity</span>
+        <select data-sev>
+          <option value="low">low</option>
+          <option value="medium" selected>medium</option>
+          <option value="high">high</option>
+          <option value="critical">critical</option>
+        </select>
+      </label>
+      <label>
+        <span>notes</span>
+        <textarea data-notes rows="3" placeholder="what went wrong?"></textarea>
+      </label>
+      <label>
+        <span>mitigation</span>
+        <textarea data-mit rows="2" placeholder="how was it fixed?"></textarea>
+      </label>
+      <div class="tag-actions">
+        <button type="submit" class="btn-primary">save tag</button>
+        <button type="button" class="btn-ghost" data-cancel>cancel</button>
+      </div>
+    </form>
   </template>
 
   <script src="/static/app.js"></script>
