@@ -8,6 +8,8 @@ Commands:
     loupe untag <trace> <step>        Remove a tag
     loupe annotations <trace>         List tags on one trace
     loupe export [--out FILE]         Bundle annotated failures into LoupeBench JSONL
+    loupe report <trace-id> [--out]   Render a shareable markdown case file
+    loupe init <name> [--dir PATH]    Scaffold a starter agent project
     loupe doctor                      Diagnose Loupe install + show what's wired up
     loupe version                     Print Loupe version
 """
@@ -28,6 +30,8 @@ from rich.table import Table
 from loupe._version import __version__
 from loupe.annotation import Annotation, AnnotationStore
 from loupe.bench import export_jsonl
+from loupe.report import render_trace_markdown
+from loupe.scaffold import scaffold
 from loupe.store import _default_dir
 
 app = typer.Typer(
@@ -224,6 +228,54 @@ def export(
         console.print("[yellow]Nothing to export yet — tag some failures first.[/yellow]")
         return
     console.print(f"[green]exported[/green] {count} record(s) → [bold]{out}[/bold]")
+
+
+@app.command("report")
+def report(
+    trace_id: str,
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Write markdown to this path (otherwise stdout)"
+    ),
+) -> None:
+    """Render a shareable markdown case file for one trace."""
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+    md = render_trace_markdown(path)
+    if out:
+        out.write_text(md, encoding="utf-8")
+        console.print(f"[green]wrote[/green] {out}")
+    else:
+        # Use plain print to keep the markdown clean for piping
+        typer.echo(md)
+
+
+@app.command("init")
+def init(
+    name: str = typer.Argument(..., help="Project / agent name"),
+    target: Path = typer.Option(
+        Path("."), "--dir", "-d", help="Target directory (default: ./<name>)"
+    ),
+) -> None:
+    """Scaffold a Loupe-instrumented agent starter."""
+    project_dir = target / name if target == Path(".") else target
+    if project_dir.exists() and any(project_dir.iterdir()):
+        console.print(
+            f"[red]Refusing to write into non-empty directory {project_dir}[/red]"
+        )
+        raise typer.Exit(code=1)
+    files = scaffold(project_dir, name)
+    console.print(f"[green]scaffolded[/green] {project_dir}")
+    for f in files:
+        console.print(f"  [dim]→[/dim] {f.relative_to(project_dir.parent)}")
+    try:
+        display_path = project_dir.relative_to(Path.cwd())
+    except ValueError:
+        display_path = project_dir
+    console.print()
+    console.print(f"  cd {display_path}")
+    console.print("  python agent.py")
+    console.print("  loupe ui")
 
 
 @app.command("version")
