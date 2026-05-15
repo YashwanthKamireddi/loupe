@@ -19,23 +19,7 @@
 
 import { closeStep, currentTrace, openStep } from "../trace.js";
 import type { Step } from "../types.js";
-
-const PROVIDERS: Record<string, string> = {
-  "api.anthropic.com": "anthropic",
-  "api.openai.com": "openai",
-  "api.mistral.ai": "mistral",
-  "api.groq.com": "groq",
-  "generativelanguage.googleapis.com": "gemini",
-  "api.cohere.ai": "cohere",
-  "api.together.xyz": "together",
-  "openrouter.ai": "openrouter",
-  "api.fireworks.ai": "fireworks",
-  "api.deepseek.com": "deepseek",
-  "api.x.ai": "xai",
-  "api.perplexity.ai": "perplexity",
-  localhost: "local",
-  "127.0.0.1": "local",
-};
+import { detectProviderFromHost, looksLikeOpenAICompatible } from "./_providers.js";
 
 const PATCH_FLAG = "__loupePatched__";
 
@@ -76,13 +60,12 @@ function makeWrappedFetch(original: Fetchable): Fetchable {
     init?: RequestInit,
   ): Promise<Response> {
     const url = extractUrl(input);
-    const provider = detectProvider(url);
-    if (!provider || !currentTrace()) {
-      return original(input as RequestInfo, init);
-    }
+    if (!currentTrace()) return original(input as RequestInfo, init);
 
-    // openStep records started_at internally; we don't need a local copy.
     const body = parseBody(init?.body);
+    const provider = classify(url, body);
+    if (!provider) return original(input as RequestInfo, init);
+
     const model = (body && typeof body === "object" && "model" in body)
       ? (body as Record<string, unknown>).model
       : undefined;
@@ -115,14 +98,17 @@ function extractUrl(input: RequestInfo | URL): string {
   return (input as Request).url;
 }
 
-function detectProvider(url: string): string | null {
+function classify(url: string, body: unknown): string | null {
+  let host: string | null = null;
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    for (const [suffix, label] of Object.entries(PROVIDERS)) {
-      if (host === suffix || host.endsWith(`.${suffix}`)) return label;
-    }
+    host = new URL(url).hostname.toLowerCase();
   } catch {
     return null;
+  }
+  const known = detectProviderFromHost(host);
+  if (known) return known.label;
+  if (looksLikeOpenAICompatible(body) && host) {
+    return `openai-compatible:${host}`;
   }
   return null;
 }

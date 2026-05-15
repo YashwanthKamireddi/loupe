@@ -5,6 +5,7 @@ Commands:
     loupe start                       Interactive first run: seed + open UI
     loupe demo                        Seed three sample traces
     loupe init <name>                 Scaffold a starter agent project
+    loupe providers                   List every LLM provider auto-detected
     loupe ui [--port 7860]            Launch the local forensic dashboard
     loupe list                        List all captured traces
     loupe show <trace-id>             Print one trace step-by-step
@@ -532,6 +533,56 @@ def doctor() -> None:
         banner("install diagnostic", version=__version__),
         status_table(rows),
     )
+
+
+@app.command("providers")
+def providers() -> None:
+    """List every LLM provider the universal capture auto-detects."""
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    from loupe.integrations._providers import ALL_PROVIDERS
+
+    by_category: dict[str, list] = {}
+    for p in ALL_PROVIDERS:
+        by_category.setdefault(p.category, []).append(p)
+
+    categories_order = [
+        ("frontier", "Frontier labs"),
+        ("inference", "Inference providers"),
+        ("aggregator", "Aggregators / gateways"),
+        ("cloud", "Enterprise cloud"),
+        ("embedding", "Embedding & retrieval"),
+        ("local", "Local servers"),
+    ]
+
+    render_padded(banner(f"{len(ALL_PROVIDERS)} providers auto-detected", version=__version__))
+
+    for key, label in categories_order:
+        items = by_category.get(key, [])
+        if not items:
+            continue
+        table = Table(
+            show_header=False,
+            show_edge=False,
+            box=SIMPLE,
+            padding=(0, 2),
+            title=Text(label, style=f"italic {AMBER}"),
+            title_justify="left",
+        )
+        table.add_column("name", style=INK)
+        table.add_column("host", style=DIM)
+        for p in items:
+            table.add_row(p.name, p.host_suffix)
+        console.print()
+        console.print(table)
+    console.print()
+    console.print(Text(
+        "  Plus: unknown hosts whose request body looks like OpenAI spec "
+        "are captured as openai-compatible:<host>.",
+        style=DIM,
+    ))
+    console.print()
 
 
 @app.command("version")

@@ -9,6 +9,42 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.9] — 2026-05-15
+
+### Added — 100% coverage push
+- **49 LLM providers** auto-detected by the universal capture (was 13).
+  Full list: anthropic, openai, gemini, mistral (+ codestral), cohere, xai,
+  deepseek, ai21, reka, aleph-alpha, zhipu, baidu, alibaba (frontier);
+  groq, cerebras, sambanova, together, fireworks, deepinfra, hyperbolic,
+  anyscale, nebius, lambda, lepton, siliconflow, featherless, inference-net,
+  modal, replicate, perplexity (inference); openrouter, portkey, kong-ai,
+  vellum (aggregators); azure-openai, aws-bedrock, vertex-ai, watsonx,
+  databricks (cloud); voyage, jina, nomic, huggingface (+ endpoints)
+  (embedding); local / 127.0.0.1 / 0.0.0.0 (local).
+- **OpenAI-compatible fallback** — unknown hosts whose request body has
+  `messages` + `model` are captured as `openai-compatible:<host>`. This
+  picks up LiteLLM proxies, internal gateways, and OpenAI-spec forks.
+- **`loupe providers` CLI command** — gorgeous categorized listing of every
+  detectable provider.
+- **`contains` match strategy** for cloud hosts where the identifier sits
+  in the middle of the FQDN (Bedrock `bedrock-runtime.*`, Vertex
+  `*-aiplatform.googleapis.com`) so we match precisely without overmatching.
+- **Authoritative wire-format spec** at `docs/SPEC.md` — the contract any
+  third-party integration (in any language) writes against. Forward-compat
+  rules + a hand-written-with-shell example.
+
+### Internal
+- Provider list extracted into `loupe.integrations._providers` (Python) and
+  `_providers.ts` (TS). Keep them in sync — one source of truth per language.
+- httpx + universal-fetch integrations both call `detect_provider_from_host`
+  + `looks_like_openai_compatible` instead of inline dictionaries.
+
+### Tests
+- Python: 86 tests pass (+ 13 since 0.0.8: provider matching, contains
+  strategy, openai-compatible fallback).
+- TypeScript: 17 tests pass.
+- Total: 103 across both packages. Lint + typecheck clean.
+
 ## [0.0.8] — 2026-05-15
 
 ### Added — Loupe now works with ANY language

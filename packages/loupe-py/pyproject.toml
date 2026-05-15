@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loupe"
-version = "0.0.8"
+version = "0.0.9"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"
 requires-python = ">=3.11"

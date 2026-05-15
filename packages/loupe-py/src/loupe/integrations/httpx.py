@@ -5,9 +5,15 @@ groq, instructor, dspy, etc.) use httpx under the hood. This integration
 patches `httpx.Client.send` / `httpx.AsyncClient.send` once, sniffs the
 target URL, and records a Loupe Step for each call to a known provider.
 
+Coverage in 2026:
+- 50+ providers across frontier labs, inference services, aggregators,
+  enterprise clouds, embedding APIs, and local servers (see _providers.py)
+- Fallback: unknown hosts whose payload *looks like* an OpenAI-spec call
+  (messages + model) are captured as `openai-compatible:<host>` — this
+  catches LiteLLM, internal proxies, OpenAI-compatible forks, etc.
+
 Use this when:
-- Your library doesn't have a Loupe direct integration yet (e.g. mistral,
-  groq, llama-stack-client, custom internal proxy).
+- Your library doesn't have a Loupe direct integration yet.
 - You want one switch that captures *everything*.
 
 Don't use this *in addition to* the direct anthropic/openai integrations —
@@ -23,27 +29,13 @@ import uuid
 from typing import Any
 from urllib.parse import urlparse
 
+from loupe.integrations._providers import (
+    detect_provider_from_host,
+    looks_like_openai_compatible,
+)
 from loupe.trace import Step, current_trace
 
 _PATCHED_FLAG = "__loupe_patched__"
-
-# Map of host suffixes → provider label. Add new providers freely.
-_PROVIDERS = {
-    "api.anthropic.com": "anthropic",
-    "api.openai.com": "openai",
-    "api.mistral.ai": "mistral",
-    "api.groq.com": "groq",
-    "generativelanguage.googleapis.com": "gemini",
-    "api.cohere.ai": "cohere",
-    "api.together.xyz": "together",
-    "openrouter.ai": "openrouter",
-    "api.fireworks.ai": "fireworks",
-    "api.deepseek.com": "deepseek",
-    "api.x.ai": "xai",
-    "api.perplexity.ai": "perplexity",
-    "localhost": "local",  # Ollama, vLLM, etc.
-    "127.0.0.1": "local",
-}
 
 
 def patch() -> bool:
@@ -70,11 +62,14 @@ def _wrap_sync(original: Any) -> Any:
     @functools.wraps(original)
     def wrapper(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        provider = _detect_provider(request)
-        if not provider or current_trace() is None:
+        if current_trace() is None:
             return original(self, request, *args, **kwargs)
 
         body = _safe_read_request_body(request)
+        provider_label = _classify(request, body)
+        if provider_label is None:
+            return original(self, request, *args, **kwargs)
+
         error: BaseException | None = None
         response = None
         try:
@@ -84,7 +79,7 @@ def _wrap_sync(original: Any) -> Any:
             error = exc
             raise
         finally:
-            _emit(provider, request, body, response, error, started)
+            _emit(provider_label, request, body, response, error, started)
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
@@ -94,11 +89,14 @@ def _wrap_async(original: Any) -> Any:
     @functools.wraps(original)
     async def wrapper(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        provider = _detect_provider(request)
-        if not provider or current_trace() is None:
+        if current_trace() is None:
             return await original(self, request, *args, **kwargs)
 
         body = _safe_read_request_body(request)
+        provider_label = _classify(request, body)
+        if provider_label is None:
+            return await original(self, request, *args, **kwargs)
+
         error: BaseException | None = None
         response = None
         try:
@@ -108,23 +106,28 @@ def _wrap_async(original: Any) -> Any:
             error = exc
             raise
         finally:
-            _emit(provider, request, body, response, error, started)
+            _emit(provider_label, request, body, response, error, started)
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
 
 
-def _detect_provider(request: Any) -> str | None:
+def _host_of(request: Any) -> str | None:
     try:
-        host = urlparse(str(request.url)).hostname
+        return urlparse(str(request.url)).hostname
     except Exception:
         return None
-    if not host:
-        return None
-    host = host.lower()
-    for suffix, label in _PROVIDERS.items():
-        if host == suffix or host.endswith("." + suffix):
-            return label
+
+
+def _classify(request: Any, body: Any) -> str | None:
+    """Return a provider label, falling back to openai-compatible detection."""
+    host = _host_of(request)
+    matched = detect_provider_from_host(host)
+    if matched is not None:
+        return matched.label
+    # Fallback: it walks like OpenAI? Capture it anyway.
+    if looks_like_openai_compatible(body) and host:
+        return f"openai-compatible:{host}"
     return None
 
 

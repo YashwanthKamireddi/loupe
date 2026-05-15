@@ -1,90 +1,166 @@
-# Loupe — Project Spec (v0.0)
+# Loupe Wire Format — v1.0
 
-> *A living document. Updated as we build. Last edit: 2026-05-14.*
+> **Status:** stable · **Format:** JSONL · **License:** CC-BY-4.0 (the spec; the implementations are MIT)
 
-## 1. Vision
+This document is the **authoritative contract** for Loupe traces. Any tool, in any language, that writes data conforming to this spec can be inspected by `loupe ui`, tagged for LoupeBench, exported as a markdown case file, etc.
 
-Make agent failures **legible**. Anyone running an LLM agent should be able to ask *"why did it fail?"* and get a real answer — not a guess, not a chat log, but a circuit-level explanation grounded in mechanistic interpretability.
+The Python and TypeScript SDKs are reference implementations. There is no privileged language. **Anything that can write JSON files (or `POST` JSON over HTTP) is a first-class citizen.**
 
-## 2. Three artifacts
+---
 
-### 2.1 `loupe` library (Python + TypeScript)
-- Drop-in `@trace` decorator + auto-instrumentation
-- Captures: prompts, completions, tool calls, file I/O, DOM state (web agents), reasoning chains
-- Local-first: writes to DuckDB by default; cloud sync optional
-- Zero-config integrations for LangGraph, OpenHands, Claude Agent SDK, Vercel AI SDK
+## 1. Storage layout
 
-### 2.2 LoupeBench (public dataset)
-- 1,000+ real agent failures, each annotated with:
-  - **Failure category** (loop, hallucination, tool misuse, deletion, security, etc.)
-  - **Root-cause circuit** — which SAE features fired during the failure
-  - **Mitigation** — what fixed it (prompt change, tool guard, model swap)
-- Hosted on HuggingFace Datasets + GitHub
-- CC-BY-4.0 license
+```
+~/.loupe/
+  traces/
+    {trace_id}.jsonl       ← one file per trace, append-only, immutable once closed
+  annotations/
+    {trace_id}.json        ← optional sidecar; LoupeBench tags
+```
 
-### 2.3 Loupe Cloud
-- Hosted dashboard for teams
-- Frame-by-frame replay with circuit overlay
-- Alerts when a circuit known to cause failures fires in prod
-- $50/seat/month, free for OSS projects
+The trace directory may be overridden via the `LOUPE_HOME` environment variable.
 
-## 3. Non-goals (saying no makes it shippable)
-- ❌ Not a framework — we never tell you *how* to write your agent
-- ❌ Not a chat-log viewer — Langfuse / Helicone already do that
-- ❌ Not closed-source — the core + bench are MIT forever
-- ❌ Not enterprise SSO / SOC2 in 2026 — focus on the 100-team midmarket
+A trace file is a sequence of **newline-delimited JSON objects** (JSONL). The first line is the trace header. Every subsequent line is a step. There is no separator other than `\n`.
 
-## 4. Open questions (decide before June)
-- [ ] Self-host vs. hosted-only for Cloud MVP?
-- [ ] Which SAE family to standardize on (Anthropic's? Apollo's? own training?)?
-- [ ] Naming convention for circuits — borrow from neuronpedia, or invent?
-- [ ] Pricing freemium tier — how many traces/month free?
+```jsonl
+{"_type":"trace","trace_id":"…","name":"…", …}
+{"_type":"step","step_id":"…","kind":"…", …}
+{"_type":"step","step_id":"…","kind":"…", …}
+```
 
-## 5. Research artifact (the paper)
+---
 
-**Working title:** *LoupeBench: A Circuit-Level Benchmark for Agent Failure Modes*
-**Target venue:** NeurIPS 2026 Datasets & Benchmarks Track
-**Deadline:** ~Sep 2026 full track CFP
+## 2. The `trace` record (line 0)
 
-**Claims we want to defend:**
-1. Agent failures cluster into N reproducible behavioral circuits.
-2. Circuit-level attribution predicts future failures better than prompt-level heuristics.
-3. The benchmark transfers across model families (Claude / Llama / Qwen).
+| field | type | required | notes |
+|---|---|---|---|
+| `_type` | `"trace"` | yes | exact literal |
+| `trace_id` | string | yes | 32-hex-char UUID4 recommended; any unique string is OK |
+| `name` | string | yes | human-readable label of the agent run |
+| `framework` | string \| null | no | "langgraph", "anthropic", "go-anthropic", "ai-sdk", anything |
+| `started_at` | number | yes | unix seconds, float (sub-millisecond precision allowed) |
+| `ended_at` | number \| null | no | unix seconds; if absent, the run is considered open |
+| `metadata` | object | no | free-form. Recognized keys: `failed: bool`, `error: string` |
 
-## 6. Cold-email targets (in priority order)
-1. Neel Nanda — DeepMind/Apollo, runs MATS
-2. Chris Olah — Anthropic interp lead (Fellows funnel)
-3. Jacob Andreas — MIT CSAIL LINGO
-4. Dylan Hadfield-Menell — MIT Algorithmic Alignment
-5. Dawn Song — Berkeley RDI
-6. Percy Liang — Stanford CRFM
+The dashboard surfaces `metadata.failed` as the trace's red/green badge and `metadata.error` as the top-of-page error banner.
 
-## 7. Stack
+---
 
-| Layer | Choice | Why |
-|---|---|---|
-| SDK (lang 1) | Python 3.11+ | required by SAELens / ML ecosystem |
-| SDK (lang 2) | TypeScript / Node 22 | required by Vercel AI SDK |
-| Local store | DuckDB | embedded, zero-deploy |
-| Cloud store | Neon Postgres + ClickHouse | free tier, scales |
-| SAE | SAELens + neuronpedia | de-facto standard |
-| Dashboard | Next.js 16 + Tailwind + shadcn/ui | matches 2026 best practice |
-| Hosting | Vercel (web) + Modal (SAE compute) | both have free tiers |
-| CI | GitHub Actions | free for public repos |
+## 3. The `step` record (lines 1..N)
 
-## 8. The "magic moment" demo plan
-A 60-second screencast that goes viral on Twitter:
-1. Show a real LangGraph agent trying to fix a bug
-2. Agent fails — deletes wrong file
-3. Cut to Loupe dashboard
-4. Scrub through the trace; circuit-attribution panel lights up at step 4
-5. Loupe: "circuit `unguarded-delete` activated. This fires in 41% of all destructive failures."
-6. Show suggested mitigation, apply it, agent succeeds
-7. End card: `pip install loupe`
+| field | type | required | notes |
+|---|---|---|---|
+| `_type` | `"step"` | yes | exact literal |
+| `step_id` | string | yes | unique within the trace; 12-hex-char UUID slice recommended |
+| `parent_step_id` | string \| null | no | for nested trees; null = top-level |
+| `kind` | enum | yes | see § 3.1 |
+| `name` | string | yes | short human label (`anthropic:claude-haiku-4-5`, `read_file`, `plan`) |
+| `started_at` | number | yes | unix seconds, float |
+| `ended_at` | number \| null | no | unix seconds; if null, the step is still open |
+| `inputs` | object | no | free-form; common keys below |
+| `outputs` | object | no | free-form; common keys below |
+| `metadata` | object | no | free-form telemetry |
+| `error` | string \| null | no | if set, the step is rendered as red and is taggable |
 
-## 9. Today's task list
-- [ ] Reserve `loupe.dev` (or `useloupe.com` if taken)
-- [ ] Create `loupe-ai` GitHub org
-- [ ] Push this repo public
-- [ ] Pick 3 framework integrations to support first (probably LangGraph + OpenHands + Claude Agent SDK)
-- [ ] Start a SCRATCH.md of agent failures we've personally seen — seed for the dataset
+### 3.1 `kind` enum
+
+| value | meaning |
+|---|---|
+| `llm-call` | An LLM API call (chat completion, message, generate) |
+| `tool-call` | An external tool/function call (`read_file`, `http_get`, `search`) |
+| `thought` | A reasoning step, a graph-node entry/exit, a planning operation |
+| `io` | File I/O, DB query, anything that touches the outside world but isn't a tool |
+| `error` | An explicit error checkpoint (the agent caught and recorded an error) |
+| `custom` | Anything else — kept for forward compatibility |
+
+The dashboard color-codes these (`llm-call=blue`, `tool-call=purple`, `error=red`, `thought=dim`).
+
+### 3.2 Recommended `inputs` / `outputs` keys
+
+For `llm-call`:
+- `inputs`: `provider`, `model`, `messages` (array of role+content), `system`, `max_tokens`, `temperature`, `stream`
+- `outputs`: `text`, `input_tokens`, `output_tokens`, `stop_reason` / `finish_reason`, `streamed: true`
+
+For `tool-call`:
+- `inputs`: tool-specific arguments (any shape)
+- `outputs`: tool return value, status, `elapsed_ms`
+
+Loupe never *requires* these keys; they're conventions the dashboard knows how to surface nicely. Anything you put in `inputs`/`outputs` is pretty-printed as JSON.
+
+---
+
+## 4. HTTP ingest
+
+`POST /api/traces` on a running `loupe ui` server accepts the **same record shape collapsed into a single object**:
+
+```json
+{
+  "name": "my-go-agent",
+  "framework": "go-anthropic",
+  "started_at": 1778800000.0,
+  "ended_at":   1778800001.2,
+  "metadata":   {"failed": true},
+  "steps": [
+    {"kind": "thought",   "name": "plan"},
+    {"kind": "llm-call",  "name": "anthropic:claude-haiku-4-5",
+       "outputs": {"text": "hi", "input_tokens": 5, "output_tokens": 2}}
+  ]
+}
+```
+
+Responses:
+- **201 Created** — `{"trace_id": "…", "name": "…", "framework": "…", "step_count": N}`
+- **400 Bad Request** — invalid JSON
+- **422 Unprocessable Entity** — schema violation; `detail` describes what's wrong
+
+Defaults applied server-side: `trace_id` is auto-generated if missing; `started_at`/`ended_at` default to `now()`; each step's `step_id` is auto-generated; each step's `ended_at` defaults to its `started_at`.
+
+---
+
+## 5. Annotation sidecar (§ optional)
+
+Stored at `~/.loupe/annotations/{trace_id}.json`. Schema:
+
+```json
+[
+  {
+    "trace_id":           "…",
+    "step_id":            "…",
+    "failure_category":   "unguarded-delete" | "hallucination" | "loop" | "tool-misuse" | …,
+    "severity":           "low" | "medium" | "high" | "critical",
+    "notes":              "free text root-cause analysis",
+    "mitigation":         "free text fix",
+    "annotator":          "username or 'anon'",
+    "tags":               ["coding", "file-io", …],
+    "circuit_attribution": {"sae_features": [8842, 12091]}
+  }
+]
+```
+
+Annotations are written by the dashboard (POST `/api/traces/{id}/annotations`) or the CLI (`loupe tag`). They never modify the trace file itself.
+
+---
+
+## 6. Forward compatibility
+
+- **Unknown fields MUST be ignored** by readers. Always preserve unknown fields on writes if you mutate a trace.
+- The `_type` discriminator (`"trace"` / `"step"`) is the only schema-versioning we need today. If a future change is breaking, a `_type: "trace-v2"` will appear and v1 readers SHOULD skip files whose header `_type` they don't recognize.
+- The wire format is intentionally minimal. Custom data lives in `metadata`, `inputs`, `outputs`. Future built-in fields (e.g. SAE circuit attribution) will be added as optional keys, never as required ones.
+
+---
+
+## 7. Example: write a trace by hand
+
+```bash
+# Minimal "anything that can write a file" implementation:
+mkdir -p ~/.loupe/traces
+cat > ~/.loupe/traces/manual-test.jsonl <<'EOF'
+{"_type":"trace","trace_id":"manual-test","name":"hand-written","framework":"shell","started_at":1778800000.0,"ended_at":1778800001.0,"metadata":{"failed":false}}
+{"_type":"step","step_id":"s1","kind":"thought","name":"plan","started_at":1778800000.1,"ended_at":1778800000.2,"inputs":{},"outputs":{"plan":"do thing"},"metadata":{},"error":null}
+{"_type":"step","step_id":"s2","kind":"llm-call","name":"local:llama3","started_at":1778800000.3,"ended_at":1778800000.9,"inputs":{"prompt":"hi"},"outputs":{"text":"hello"},"metadata":{},"error":null}
+EOF
+
+loupe ui   # → trace appears in the dashboard
+```
+
+That's the entire contract.
