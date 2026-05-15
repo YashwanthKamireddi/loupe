@@ -4,11 +4,11 @@
 
 **A magnifying glass for your AI agent.**
 
-Open-source forensics + interpretability for LLM agents. Record every step, replay any failure, and see *why* it went wrong — at the level of individual neural circuits.
+Open-source forensics + interpretability for LLM agents. Record every step, replay any failure, and build the public benchmark of *why* agents go wrong.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#)
-[![GitHub stars](https://img.shields.io/github/stars/loupe-ai/loupe?style=social)](#)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](#)
 
 </div>
 
@@ -25,49 +25,91 @@ AI agents fail. Constantly. Datadog's *State of AI Engineering 2026* reports tha
 
 That's not engineering. That's superstition.
 
-**Loupe makes the invisible visible.** Drop it into your agent, replay any failure, and see exactly which *internal reasoning circuit* fired when things went sideways.
+**Loupe makes the invisible visible.** Drop it into your agent, replay any failure, tag the root cause, and ship every annotated failure into a public benchmark that researchers and labs can compete on.
+
+## Install (free for everyone)
+
+```bash
+pip install loupe                # core + CLI
+pip install 'loupe[ui]'          # adds the local web dashboard
+pip install 'loupe[langgraph]'   # adds LangChain / LangGraph integration
+pip install 'loupe[anthropic]'   # adds Anthropic SDK auto-instrumentation
+pip install 'loupe[openai]'      # adds OpenAI SDK auto-instrumentation
+```
+
+> Loupe is currently in pre-alpha; the canonical install path is `pip install -e .` from this repo until v0.1.
+
+## 60-second quickstart
+
+```python
+from loupe import trace
+from loupe.integrations.langchain import LoupeCallbackHandler
+
+@trace(framework="langgraph", name="auth-refactor-agent")
+async def run_agent(query: str):
+    handler = LoupeCallbackHandler()
+    return await graph.ainvoke({"q": query}, config={"callbacks": [handler]})
+```
+
+Then:
+
+```bash
+loupe list           # see all your captured runs
+loupe ui             # open the forensic dashboard at http://localhost:7860
+```
+
+Click any failing step in the dashboard → fill in **category / severity / notes / mitigation** → it's now a LoupeBench entry. When you have ten, ship them:
+
+```bash
+loupe export --out my-failures.jsonl
+```
 
 ## What's in the box
 
 | Piece | What it is | Status |
 |---|---|---|
-| [`@loupe/py`](packages/loupe-py) | Python SDK — drop-in trace capture for LangGraph / OpenHands / Claude Agent SDK | 🚧 building |
-| [`@loupe/ts`](packages/loupe-ts) | TypeScript SDK — same, for Vercel AI SDK / AI Agents JS frameworks | 🚧 building |
-| [LoupeBench](bench) | Public benchmark — 1,000+ annotated agent failures with circuit-level causes | 🚧 building |
-| [Loupe Cloud](apps/web) | Hosted dashboard — frame-by-frame replay with SAE-feature attribution | 🚧 building |
+| `loupe` Python SDK | `@trace` decorator + sync/async + JSONL store | ✅ v0.0.1 |
+| LangChain / LangGraph integration | `LoupeCallbackHandler` for any LangChain runnable | ✅ v0.0.2 |
+| Local web dashboard | FastAPI + forensic-dossier SPA — `loupe ui` | ✅ v0.0.3 |
+| Annotation layer + `loupe tag/export` | Turn captured failures into LoupeBench JSONL | ✅ v0.0.4 |
+| Anthropic + OpenAI direct integration | `patch()` once, all SDK calls auto-traced | ✅ v0.0.4 |
+| TypeScript SDK (`@loupe/sdk`) | Same `trace()` API for Vercel AI SDK / Node | 🚧 v0.1 |
+| SAE-based circuit attribution | Surface which neural circuits fired on failure | 🚧 v0.2 |
+| Loupe Cloud (hosted) | Share traces with your team, dashboards online | 🚧 v0.2 |
 
-## The magic moment (60 seconds)
+## CLI
 
-```python
-from loupe import trace
-
-@trace
-async def my_agent(query: str):
-    # your existing LangGraph / OpenHands / whatever agent
-    return await graph.ainvoke({"query": query})
+```text
+loupe list                        list traces (newest first, with tag counts)
+loupe show <trace-id>             print step-by-step content of one trace
+loupe ui [--port 7860]            launch local dashboard at http://localhost:7860
+loupe tag <trace> <step> <cat>    mark a step as a benchmark-worthy failure
+loupe untag <trace> <step>        remove a tag
+loupe annotations <trace>         list tags on one trace
+loupe export [--out FILE]         bundle annotated failures into LoupeBench JSONL
+loupe doctor                      diagnose your install
+loupe version                     print Loupe version
 ```
 
-Your agent fails on a task. You open Loupe and see:
+## The magic moment
 
-> **Step 4 → activated circuit `form-validation-loop` (SAE feature #8842)**
-> This circuit fires in 73% of failed multi-step web tasks.
-> Suggested mitigation: add a checkpoint prompt that breaks the loop.
+Your agent fails. You open Loupe. You see:
 
-That's it. That's the product.
+```
+Step 4 → activated circuit `unguarded-delete`
+This circuit fires in 41% of all destructive failures.
+Suggested mitigation: add a path-prefix guard before any rm.
+```
 
-## Roadmap
+(Circuit-level attribution arrives in v0.2 with SAE integration. Today you'll see the failing step in the timeline, the error stack, inputs/outputs, and tag it for the benchmark.)
 
-- [ ] **May 2026** — Project spec + 100 hand-annotated failures + 3 framework integrations chosen
-- [ ] **June 2026** — `loupe` library v0.1, first SAE probe runs end-to-end
-- [ ] **July 2026** — LoupeBench v0.1 (1,000 failures) + public Show HN launch
-- [ ] **Aug 2026** — Loupe Cloud MVP open beta
-- [ ] **Sep 2026** — arXiv preprint + NeurIPS 2026 Datasets & Benchmarks submission
-- [ ] **Oct 2026** — 5 case-study posts + paid plan launch
-- [ ] **Nov 2026** — 5k GitHub stars target
+## LoupeBench — public dataset
+
+Every tagged failure becomes a candidate for LoupeBench, a CC-BY-4.0 dataset of agent failure modes with reproducible traces. Schema lives in [`bench/README.md`](bench/README.md). Contribute via the [CONTRIBUTING guide](CONTRIBUTING.md).
 
 ## Built on
 
-[SAELens](https://github.com/jbloomAus/SAELens) · [neuronpedia](https://www.neuronpedia.org) · [OpenTelemetry](https://opentelemetry.io) · [LangGraph](https://www.langchain.com/langgraph) · [OpenHands](https://github.com/All-Hands-AI/OpenHands)
+[SAELens](https://github.com/jbloomAus/SAELens) · [neuronpedia](https://www.neuronpedia.org) · [LangChain](https://github.com/langchain-ai/langchain) · [LangGraph](https://www.langchain.com/langgraph) · [FastAPI](https://fastapi.tiangolo.com) · [DuckDB](https://duckdb.org)
 
 ## License
 
@@ -76,5 +118,5 @@ MIT — see [LICENSE](LICENSE). Use it. Fork it. Ship it.
 ---
 
 <div align="center">
-<sub>Loupe is open research. If you're working on agent observability, mech interp, or eval — please open an issue and say hi.</sub>
+<sub>Loupe is open research. If you work on agent observability, mech interp, or eval — please open an issue and say hi.</sub>
 </div>

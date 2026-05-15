@@ -8,18 +8,24 @@ Commands:
     loupe untag <trace> <step>        Remove a tag
     loupe annotations <trace>         List tags on one trace
     loupe export [--out FILE]         Bundle annotated failures into LoupeBench JSONL
+    loupe doctor                      Diagnose Loupe install + show what's wired up
+    loupe version                     Print Loupe version
 """
 
 from __future__ import annotations
 
+import importlib
+import importlib.metadata as md
 import json
 import os
+import sys
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from loupe._version import __version__
 from loupe.annotation import Annotation, AnnotationStore
 from loupe.bench import export_jsonl
 from loupe.store import _default_dir
@@ -218,6 +224,58 @@ def export(
         console.print("[yellow]Nothing to export yet — tag some failures first.[/yellow]")
         return
     console.print(f"[green]exported[/green] {count} record(s) → [bold]{out}[/bold]")
+
+
+@app.command("version")
+def version() -> None:
+    """Print Loupe version."""
+    console.print(f"loupe [cyan]{__version__}[/cyan]")
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Diagnose Loupe install + report what integrations are reachable."""
+    table = Table(title=f"loupe doctor · v{__version__}", show_lines=False)
+    table.add_column("check", style="bold")
+    table.add_column("status")
+    table.add_column("detail", style="dim")
+
+    home = _default_dir()
+    table.add_row("LOUPE_HOME", "[green]ok[/green]", str(home))
+
+    traces = list((home / "traces").glob("*.jsonl")) if (home / "traces").exists() else []
+    table.add_row(
+        "traces dir",
+        "[green]ok[/green]" if traces else "[yellow]empty[/yellow]",
+        f"{len(traces)} trace(s)",
+    )
+
+    annots = list((home / "annotations").glob("*.json")) if (home / "annotations").exists() else []
+    table.add_row(
+        "annotations dir",
+        "[green]ok[/green]" if annots else "[yellow]empty[/yellow]",
+        f"{len(annots)} file(s)",
+    )
+
+    for pkg, integration in [
+        ("langchain_core", "langchain"),
+        ("anthropic", "anthropic"),
+        ("openai", "openai"),
+        ("fastapi", "ui"),
+    ]:
+        try:
+            importlib.import_module(pkg)
+            ver = md.version(pkg) if pkg != "fastapi" else md.version("fastapi")
+            table.add_row(f"integration:{integration}", "[green]ready[/green]", f"{pkg} {ver}")
+        except (ImportError, md.PackageNotFoundError):
+            table.add_row(
+                f"integration:{integration}",
+                "[dim]missing[/dim]",
+                f"pip install '{integration}'",
+            )
+
+    table.add_row("python", "[green]ok[/green]", sys.version.split()[0])
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
