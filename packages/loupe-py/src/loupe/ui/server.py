@@ -2,6 +2,7 @@
 
 Endpoints:
   GET    /api/traces                         List traces (header only, newest first)
+  POST   /api/traces                         Ingest a trace from ANY language
   GET    /api/traces/{id}                    Full trace with steps + annotations
   GET    /api/traces/{id}/annotations        List annotations for one trace
   POST   /api/traces/{id}/annotations        Create/update an annotation
@@ -38,6 +39,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from loupe.annotation import Annotation, AnnotationStore
+from loupe.ingest import IngestError, ingest
 from loupe.report import render_trace_markdown
 from loupe.store import _default_dir
 
@@ -90,6 +92,31 @@ def create_app() -> FastAPI:
                 "step_count": total_steps,
                 "annotation_count": annotations,
             }
+        )
+
+    @app.post("/api/traces", status_code=201)
+    async def ingest_trace(request: Request) -> JSONResponse:
+        """Accept a trace document from any language and persist it.
+
+        The shape mirrors the canonical JSONL wire format. See docs/SPEC.md
+        for the full schema. Returns the trace_id so callers can link to it.
+        """
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
+        try:
+            trace = ingest(payload)
+        except IngestError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(
+            {
+                "trace_id": trace.trace_id,
+                "name": trace.name,
+                "framework": trace.framework,
+                "step_count": len(trace.steps),
+            },
+            status_code=201,
         )
 
     @app.get("/api/traces")

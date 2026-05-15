@@ -9,6 +9,37 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.8] — 2026-05-15
+
+### Added — Loupe now works with ANY language
+- **`POST /api/traces`** HTTP ingest endpoint — any HTTP client (Go, Rust,
+  Ruby, Java, curl, browser fetch, anything) can submit a Loupe-shaped JSON
+  payload and the dashboard picks it up immediately via SSE.
+  - New `loupe.ingest` module with strict-but-lenient validation
+  - Required fields: `name`, `steps` (list, may be empty). Each step needs
+    `kind` (`llm-call`/`tool-call`/`thought`/`error`/`io`/`custom`) and `name`.
+  - Everything else gets sensible defaults (auto-generated `trace_id`, `now()`
+    timestamps, etc.) so a one-line curl works.
+  - Returns 201 with `{trace_id, name, framework, step_count}`.
+- **`@loupe/sdk/universal` — `patchFetch()`** — TypeScript counterpart of the
+  Python httpx patch. One line patches `globalThis.fetch` and captures every
+  call to a known LLM provider (anthropic, openai, mistral, groq, gemini,
+  cohere, together, openrouter, fireworks, deepseek, xai, perplexity, local).
+  - Also exports `wrapFetch(original)` for non-global use (custom fetch
+    instances, dependency injection in tests).
+  - Streaming responses (`text/event-stream`) get a `streamed: true` flag.
+
+### Tests
+- Python: 52 tests pass (44 → 52 with 8 new ingest tests).
+- TypeScript: 17 tests pass (12 → 17 with 5 universal-fetch tests).
+- Total: 69 across both packages. Lint + typecheck clean.
+
+### Docs
+- README "Any other language — Go, Rust, Ruby, Java, curl" section with a
+  copy-paste curl example.
+- The wire-format contract is now treated as part of the public surface and
+  documented in docs/SPEC.md.
+
 ## [0.0.7] — 2026-05-15
 
 ### Added

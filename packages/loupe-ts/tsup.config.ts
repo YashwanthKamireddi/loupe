@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     "integrations/ai-sdk": "src/integrations/ai-sdk.ts",
+    "integrations/universal": "src/integrations/universal.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

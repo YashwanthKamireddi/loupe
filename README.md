@@ -93,7 +93,7 @@ def my_agent(query: str):
 
 No framework integration needed — `@trace` + `record_step` covers 100% of cases.
 
-### TypeScript / Node?
+### TypeScript / Node
 
 Same primitives, same wire format, same dashboard:
 
@@ -106,7 +106,41 @@ const myAgent = trace({ framework: "vercel-ai-sdk" }, async (q: string) => {
 });
 ```
 
-Both Python and TS write the **same JSONL** to `~/.loupe/traces/` — `loupe ui` shows them side-by-side.
+Plus universal `fetch` capture — same idea as the Python httpx patch but for the JS/TS ecosystem:
+
+```typescript
+import { patchFetch } from "@loupe/sdk/universal";
+patchFetch();                       // once, anywhere, at startup
+
+// now anything that uses global fetch is captured:
+//   official anthropic / openai / mistral / @google/generative-ai / groq SDKs
+//   Vercel AI SDK, instructor.js, any custom OpenAI-spec client
+```
+
+### Any other language — Go, Rust, Ruby, Java, curl, anything
+
+Loupe is **wire-format-first**. The dashboard accepts a `POST /api/traces` from any HTTP client. Run `loupe ui` and your Go/Rust/etc. agent just POSTs:
+
+```bash
+curl -X POST http://localhost:7860/api/traces \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-go-agent",
+    "framework": "go-anthropic",
+    "metadata": {"failed": false},
+    "steps": [
+      {"kind": "thought",   "name": "plan",          "outputs": {"plan": "..."}},
+      {"kind": "llm-call",  "name": "anthropic:claude-haiku-4-5",
+         "inputs":  {"prompt": "hi"},
+         "outputs": {"text": "hello", "input_tokens": 5, "output_tokens": 2}},
+      {"kind": "tool-call", "name": "search",        "inputs":  {"q": "loupe"}}
+    ]
+  }'
+```
+
+That's it — the trace shows up in the dashboard, SSE pushes it to anyone watching, and you can tag it for LoupeBench. The full schema (which fields are required, all the step `kind` values) lives in [`docs/SPEC.md`](docs/SPEC.md).
+
+Both Python and TS write the **same JSONL** to `~/.loupe/traces/` — and the HTTP endpoint writes the same format — so `loupe ui` shows everything side-by-side regardless of which language captured it.
 
 ## What's in the box
 
