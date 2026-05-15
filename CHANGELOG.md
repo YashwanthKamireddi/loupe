@@ -9,6 +9,39 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.7] — 2026-05-15
+
+### Added
+- **Universal HTTP capture** (`loupe.integrations.httpx.patch()`) — one-line
+  monkey-patch over `httpx.Client.send` / `AsyncClient.send` that detects calls
+  to known LLM providers (Anthropic, OpenAI, Mistral, Groq, Gemini, Cohere,
+  Together, OpenRouter, Fireworks, DeepSeek, xAI, Perplexity, Ollama/local) and
+  records each as a `llm-call` Step with model + prompt + usage + status.
+  Works with *any* Python client that uses httpx under the hood — instructor,
+  dspy, llamaindex, custom proxies, etc.
+- New optional extra: `pip install 'loupe[universal]'`
+- 5 new tests pinning the universal-capture behavior (44 → 49 tests total).
+
+### Changed (CLI redesign)
+- **`loupe` with no args now shows a welcome screen** with adaptive next-step
+  hints (different copy when you have 0 traces vs. when you have some).
+- **New `loupe start` command** — interactive first-run: seeds samples if
+  needed, opens the browser, starts the dashboard.
+- All command outputs use a unified, calm visual language: amber-on-charcoal
+  banner, `●/○` status dots, hairline tables, no heavy box-drawing.
+- `loupe doctor` now reports the universal integration too; correctly escapes
+  square brackets in `pip install 'loupe[xxx]'` hints (was broken in 0.0.6).
+- `loupe show` got color-coded step kinds (llm-call=blue, tool-call=magenta,
+  error=red, thought=dim).
+- Shared `loupe._tui` module so every command renders from one palette.
+
+### Docs
+- README quickstart rewritten around the universal capture path so it's clear
+  Loupe works with *any* Python LLM client, not just LangChain/Anthropic/OpenAI.
+
+### Verified
+- 49 Python tests pass · 12 TS tests pass · lint + typecheck clean.
+
 ## [0.0.6] — 2026-05-15
 
 ### Added

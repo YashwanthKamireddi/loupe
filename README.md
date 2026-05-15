@@ -39,30 +39,74 @@ pip install 'loupe[openai]'      # adds OpenAI SDK auto-instrumentation
 
 > Loupe is currently in pre-alpha; the canonical install path is `pip install -e .` from this repo until v0.1.
 
-## 60-second quickstart
+## 30-second quickstart
+
+```bash
+loupe start         # seeds sample traces + opens the dashboard
+```
+
+That's it. The browser pops up at `http://localhost:7860` with three real-looking traces, one of them already tagged as a `unguarded-delete` failure, so you can play with the UI immediately.
+
+## Instrument your own agent — pick your stack
+
+Loupe works with **any LLM agent in any framework**. Three ways in, ranked by zero-config-ness:
+
+### Option 1 — Universal HTTP capture (any Python LLM client)
 
 ```python
 from loupe import trace
-from loupe.integrations.langchain import LoupeCallbackHandler
+from loupe.integrations.httpx import patch
+patch()                                        # one line. anywhere. once.
 
-@trace(framework="langgraph", name="auth-refactor-agent")
-async def run_agent(query: str):
-    handler = LoupeCallbackHandler()
-    return await graph.ainvoke({"q": query}, config={"callbacks": [handler]})
+@trace(framework="universal")
+def my_agent(query: str):
+    # use whatever client you want — mistral, groq, anthropic, openai,
+    # google-genai, cohere, together, deepseek, perplexity, even local Ollama.
+    return some_llm_client.generate(query)
 ```
 
-Then:
+Any HTTP call to a known LLM provider becomes a Step automatically.
 
-```bash
-loupe list           # see all your captured runs
-loupe ui             # open the forensic dashboard at http://localhost:7860
+### Option 2 — Direct SDK integration (zero-config)
+
+```python
+from loupe.integrations.anthropic import patch as patch_anthropic
+from loupe.integrations.openai    import patch as patch_openai
+patch_anthropic(); patch_openai()              # one line each.
+
+import anthropic
+client = anthropic.Anthropic()                 # already traced.
 ```
 
-Click any failing step in the dashboard → fill in **category / severity / notes / mitigation** → it's now a LoupeBench entry. When you have ten, ship them:
+### Option 3 — Manual capture (works with literally anything)
 
-```bash
-loupe export --out my-failures.jsonl
+```python
+from loupe import trace, record_step
+
+@trace(framework="dspy")        # any string — pydantic-ai, instructor, llamaindex, your own…
+def my_agent(query: str):
+    record_step("thought",   "plan",    outputs={"plan": "..."})
+    record_step("tool-call", "search",  inputs={"q": query})
+    record_step("llm-call",  "claude",  outputs={"text": "..."})
+    return "..."
 ```
+
+No framework integration needed — `@trace` + `record_step` covers 100% of cases.
+
+### TypeScript / Node?
+
+Same primitives, same wire format, same dashboard:
+
+```typescript
+import { trace, recordStep } from "@loupe/sdk";
+
+const myAgent = trace({ framework: "vercel-ai-sdk" }, async (q: string) => {
+  recordStep("thought", "plan");
+  return await generateText({ model, prompt: q });
+});
+```
+
+Both Python and TS write the **same JSONL** to `~/.loupe/traces/` — `loupe ui` shows them side-by-side.
 
 ## What's in the box
 
