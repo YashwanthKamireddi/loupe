@@ -29,6 +29,7 @@ import uuid
 from typing import Any
 from urllib.parse import urlparse
 
+from loupe._redact import redact
 from loupe.integrations._providers import (
     detect_provider_from_host,
     looks_like_openai_compatible,
@@ -160,9 +161,9 @@ def _emit(
     inputs: dict[str, Any] = {"provider": provider, "model": model}
     if isinstance(body, dict):
         if "messages" in body:
-            inputs["messages"] = _truncate(body["messages"])
+            inputs["messages"] = _truncate(redact(body["messages"]))
         if "prompt" in body:
-            inputs["prompt"] = _truncate(body["prompt"])
+            inputs["prompt"] = _truncate(redact(body["prompt"]))
         if "max_tokens" in body:
             inputs["max_tokens"] = body["max_tokens"]
         if body.get("stream"):

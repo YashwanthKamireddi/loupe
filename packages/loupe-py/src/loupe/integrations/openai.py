@@ -28,6 +28,7 @@ import time
 import uuid
 from typing import Any
 
+from loupe._redact import redact
 from loupe.integrations._streaming import TracedAsyncStream, TracedSyncStream
 from loupe.trace import Step, current_trace
 
@@ -267,13 +268,13 @@ def _input_summary(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 def _summarize_messages(messages: Any) -> Any:
     if not isinstance(messages, list):
-        return _truncate(messages)
+        return _truncate(redact(messages))
     return [
         {
             "role": m.get("role") if isinstance(m, dict) else getattr(m, "role", None),
-            "content": _truncate(
+            "content": _truncate(redact(
                 m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
-            ),
+            )),
         }
         for m in messages
     ]

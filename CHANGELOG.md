@@ -7,7 +7,33 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - DuckDB indexer for fast search across many traces
 - Mastra agent framework integration (TS)
+- TypeScript port of the redactor (mirror of `loupe._redact`)
 - SAE-based circuit attribution (the research artifact)
+
+## [0.0.10] — 2026-05-15
+
+### Added — security + future-proofing
+- **Automatic secret redaction** (`loupe._redact`) — every captured payload now
+  runs through a deep-walking redactor before it hits disk.
+  - Field-name patterns: any key containing `authorization` / `api_key` /
+    `apikey` / `token` / `secret` / `password` / `bearer` / `private_key` /
+    `access_key` / `x-auth` is replaced with `[redacted]`.
+  - Value patterns: `Bearer <jwt>`, `sk-…` (OpenAI), `sk-ant-…` (Anthropic),
+    `sk-or-…` (OpenRouter), `gsk_…` (Groq), `gho_…` / `ghp_…` (GitHub),
+    `AIza…` (Google), and JWT structures are scrubbed inside any string value.
+  - Walks dicts/lists/tuples to arbitrary nesting (depth-capped at 8 for safety).
+  - Idempotent, non-mutating, never raises.
+  - Wired into `httpx`, `anthropic`, and `openai` integrations so messages
+    + prompts + system text are all clean before serialization.
+  - 10 unit tests pin the behavior (96 Python tests total now).
+
+- **Canonical JSON schema** at `docs/loupe-trace.schema.json` — Draft-2020-12,
+  validates the wire-format payload accepted by `POST /api/traces`. Any
+  language can now validate Loupe traces programmatically.
+
+### Verified
+- 96 Python + 17 TypeScript = 113 tests, all green.
+- Lint clean. Tsc strict clean.
 
 ## [0.0.9] — 2026-05-15
 
