@@ -9,6 +9,39 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.12] — 2026-05-15
+
+### Added — base proof + 2026 framework coverage
+
+**Pydantic AI integration** (`loupe.integrations.pydantic_ai`):
+- Monkey-patches `Agent.run` / `Agent.run_sync` to capture every model
+  invocation as a Loupe Step. Captures model id, system prompt, user prompt,
+  result text, and token usage when the framework reports it.
+- Prompts run through the same redactor as everything else — credentials
+  pasted into a user prompt never hit disk.
+- New extra: `pip install 'loupe[pydantic-ai]'`. Surfaced in `loupe doctor`.
+- 4 new tests covering sync, async, error capture, and redaction parity.
+
+**Schema-vs-validator parity** (`tests/test_schema_validator_parity.py`):
+- 16 parametrised cases run every valid + invalid payload through *both*
+  `loupe.ingest.ingest()` and `jsonschema` against
+  `docs/loupe-trace.schema.json`. The two MUST agree on every case.
+- Prevents schema drift between the public spec (the schema file) and the
+  production validator (the ingest function). If they ever disagree, the
+  test fails and the build breaks.
+
+**Wire-format golden snapshot** (`tests/test_wire_format_snapshot.py`):
+- A 3-line JSONL fixture in `tests/fixtures/canonical_trace.jsonl` is the
+  *exact* expected output for a known Trace. Any change to field order,
+  key naming, or type coercion in the Python serializer fails the test
+  immediately. Future TypeScript snapshot tests will validate against the
+  same fixture — bit-identical cross-language wire format becomes a CI gate.
+- Bonus: the same fixture round-trips through `loupe.ingest.ingest()` so
+  the canonical example is always ingest-valid.
+
+### Tests
+- 138 Python + 26 TypeScript = 164 tests. Lint + tsc strict clean.
+
 ## [0.0.11] — 2026-05-15
 
 ### Added — stability & correctness pass

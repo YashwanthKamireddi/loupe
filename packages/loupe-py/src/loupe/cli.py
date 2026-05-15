@@ -511,6 +511,7 @@ def doctor() -> None:
         ("langchain_core", "langchain", "langgraph"),
         ("anthropic", "anthropic", "anthropic"),
         ("openai", "openai", "openai"),
+        ("pydantic_ai", "pydantic-ai", "pydantic-ai"),
         ("httpx", "universal", "universal"),
         ("fastapi", "ui", "ui"),
     ]
