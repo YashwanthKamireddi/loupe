@@ -512,4 +512,42 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+/* ----- live updates via SSE --------------------------------------------- */
+
+let _eventSource = null;
+function subscribeToEvents() {
+  if (typeof EventSource === "undefined") return;
+  try {
+    _eventSource = new EventSource("/api/events");
+  } catch (_) {
+    return;
+  }
+  _eventSource.addEventListener("new_trace", async (e) => {
+    let payload;
+    try { payload = JSON.parse(e.data); } catch { return; }
+    state.traces = await (await fetch("/api/traces")).json();
+    renderTraceList();
+    loadStats();
+    flashToast(`New trace captured (${payload.trace_id.slice(0, 8)})`);
+  });
+  _eventSource.addEventListener("annotation_changed", async (_e) => {
+    // Refresh sidebar + active trace if it matches
+    state.traces = await (await fetch("/api/traces")).json();
+    renderTraceList();
+    loadStats();
+    if (state.traceId) {
+      state.trace = await (await fetch(`/api/traces/${state.traceId}`)).json();
+      // Don't yank the user's focus — only re-render if no tag form is open
+      if (!els.viewer.querySelector(".tag-form")) {
+        renderTrace();
+        if (state.stepIdx >= 0) selectStep(state.stepIdx);
+      }
+    }
+  });
+  _eventSource.onerror = () => {
+    // Browser auto-reconnects with backoff; nothing to do here.
+  };
+}
+
 loadTraces();
+subscribeToEvents();

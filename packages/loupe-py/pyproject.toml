@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "../../LICENSE" }
 authors = [
-    { name = "Yashwanth Kamireddi", email = "software@gitam.edu" },
+    { name = "Yashwanth Kamireddi", email = "yashwanthkamireddi@users.noreply.github.com" },
 ]
 keywords = ["llm", "agents", "observability", "interpretability", "mechanistic-interpretability", "evaluation"]
 classifiers = [
