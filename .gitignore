@@ -55,3 +55,9 @@ Thumbs.db
 # --- Local notes (private) ---
 SCRATCH.md
 NOTES.md
+
+# --- TypeScript SDK ---
+packages/loupe-ts/node_modules/
+packages/loupe-ts/dist/
+packages/loupe-ts/.turbo/
+packages/loupe-ts/*.tsbuildinfo

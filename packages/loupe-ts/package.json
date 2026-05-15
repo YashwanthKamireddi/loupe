@@ -1,0 +1,70 @@
+{
+  "name": "@loupe/sdk",
+  "version": "0.0.4",
+  "description": "A magnifying glass for your AI agent — TypeScript SDK.",
+  "license": "MIT",
+  "author": "Yashwanth Kamireddi",
+  "homepage": "https://loupe.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loupe-ai/loupe",
+    "directory": "packages/loupe-ts"
+  },
+  "keywords": [
+    "llm",
+    "agents",
+    "observability",
+    "interpretability",
+    "evaluation",
+    "tracing",
+    "vercel-ai-sdk"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./ai-sdk": {
+      "types": "./dist/integrations/ai-sdk.d.ts",
+      "import": "./dist/integrations/ai-sdk.js",
+      "require": "./dist/integrations/ai-sdk.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no linter yet (relying on tsc + tests)'",
+    "example:hello": "tsx examples/hello.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "peerDependencies": {
+    "ai": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  }
+}
