@@ -73,9 +73,13 @@ loupe export --out my-failures.jsonl
 | Local web dashboard | FastAPI + forensic-dossier SPA — `loupe ui` | ✅ v0.0.3 |
 | Annotation layer + `loupe tag/export` | Turn captured failures into LoupeBench JSONL | ✅ v0.0.4 |
 | Anthropic + OpenAI direct integration | `patch()` once, all SDK calls auto-traced | ✅ v0.0.4 |
-| TypeScript SDK (`@loupe/sdk`) | Same `trace()` API for Vercel AI SDK / Node | 🚧 v0.1 |
+| **TypeScript SDK (`@loupe/sdk`)** | **Same `trace()` API for Vercel AI SDK / Node — same wire format, same dashboard** | ✅ v0.0.4 |
 | SAE-based circuit attribution | Surface which neural circuits fired on failure | 🚧 v0.2 |
 | Loupe Cloud (hosted) | Share traces with your team, dashboards online | 🚧 v0.2 |
+
+## Two languages, one dashboard
+
+Python and TypeScript SDKs write the **identical JSONL wire format** to `~/.loupe/traces/`. The Python `loupe ui` dashboard reads both transparently — your Vercel AI SDK trace from a Next.js app and your LangGraph trace from a Python notebook appear side-by-side.
 
 ## CLI
 

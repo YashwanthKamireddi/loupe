@@ -8,7 +8,7 @@ on:
 
 jobs:
   python:
-    name: loupe-py · ${{ matrix.python }}
+    name: loupe-py · py${{ matrix.python }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -21,7 +21,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -33,7 +32,7 @@ jobs:
           pip install -e '.[dev,ui,langgraph]'
 
       - name: lint
-        run: python -m ruff check src/ tests/
+        run: python -m ruff check src/ tests/ examples/
 
       - name: type-check
         run: python -m mypy --ignore-missing-imports src/loupe/trace.py src/loupe/store.py src/loupe/annotation.py src/loupe/bench.py
@@ -41,3 +40,73 @@ jobs:
 
       - name: test
         run: python -m pytest -q
+
+  typescript:
+    name: loupe-ts · node${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22", "24"]
+
+    defaults:
+      run:
+        working-directory: packages/loupe-ts
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/loupe-ts/package-lock.json
+
+      - name: install
+        run: npm ci || npm install
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: test
+        run: npm test
+
+      - name: build
+        run: npm run build
+
+  cross-language:
+    name: cross-language wire format
+    runs-on: ubuntu-latest
+    needs: [python, typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+
+      - name: install both packages
+        run: |
+          cd packages/loupe-py && pip install -e '.[ui,dev]' && cd ../..
+          cd packages/loupe-ts && npm install && cd ../..
+
+      - name: capture from Python
+        run: cd packages/loupe-py && python examples/hello_loupe.py || true
+
+      - name: capture from TypeScript
+        run: cd packages/loupe-ts && npm run example:hello || true
+
+      - name: assert both traces in shared ~/.loupe
+        run: |
+          python -c "
+          import json, glob
+          files = glob.glob('${HOME}/.loupe/traces/*.jsonl')
+          frameworks = set()
+          for f in files:
+              with open(f) as fh:
+                  h = json.loads(next(fh))
+              frameworks.add(h.get('framework'))
+          print('frameworks:', frameworks)
+          assert 'demo' in frameworks, 'python trace missing'
+          assert 'demo-ts' in frameworks, 'typescript trace missing'
+          print('cross-language wire format verified.')
+          "

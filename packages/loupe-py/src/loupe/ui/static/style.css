@@ -282,6 +282,13 @@ html, body {
   text-overflow: ellipsis;
 }
 
+.tl-step .tl-dur {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-dim);
+  text-align: right;
+}
+
 /* ----- Panes ----- */
 .panes { display: grid; grid-template-columns: 300px 1fr; flex: 1; overflow: hidden; }
 .pane { display: flex; flex-direction: column; overflow: hidden; }

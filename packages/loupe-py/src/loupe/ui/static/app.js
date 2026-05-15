@@ -115,15 +115,26 @@ function renderTrace() {
   const annByStep = new Map();
   (trace.annotations || []).forEach((a) => annByStep.set(a.step_id, a));
 
+  // Compute per-step durations so the timeline reflects time spent
+  const durations = trace.steps.map((s) =>
+    s.ended_at && s.started_at ? Math.max(0, s.ended_at - s.started_at) : 0
+  );
+  const minWeight = 1; // smallest cell gets weight 1
+  const maxDur = Math.max(...durations, 0);
+  const weights = durations.map((d) => (maxDur > 0 ? minWeight + (d / maxDur) * 4 : 1));
+
   trace.steps.forEach((step, idx) => {
     const tagged = annByStep.has(step.step_id);
     const tlEl = document.createElement("div");
     tlEl.className = "tl-step";
+    tlEl.style.flexGrow = String(weights[idx]);
     if (step.error) tlEl.classList.add("failed");
     if (tagged) tlEl.classList.add("tagged");
+    const durMs = durations[idx] * 1000;
     tlEl.innerHTML = `
       <span class="tl-kind">${step.kind}</span>
       <span class="tl-name">${escapeHtml(step.name)}</span>
+      <span class="tl-dur">${durMs > 0.5 ? durMs.toFixed(0) + "ms" : ""}</span>
     `;
     tlEl.addEventListener("click", () => selectStep(idx));
     timeline.appendChild(tlEl);
