@@ -16,7 +16,9 @@ Usage:
         )
         return resp.choices[0].message.content
 
-Captures Chat Completions (sync + async). Responses API is captured if present.
+Captures chat.completions (sync + async, streaming + non-streaming) and the
+Responses API when present. For streaming calls, each chunk is tee'd into a
+Loupe Step that's finalized once the stream is exhausted.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import time
 import uuid
 from typing import Any
 
+from loupe.integrations._streaming import TracedAsyncStream, TracedSyncStream
 from loupe.trace import Step, current_trace
 
 _PATCHED_FLAG = "__loupe_patched__"
@@ -65,20 +68,44 @@ def patch() -> bool:
     return changed
 
 
+# ---------------------------------------------------------------------------
+# Wrappers
+# ---------------------------------------------------------------------------
+
+
 def _wrap_sync(original: Any, kind: str) -> Any:
     @functools.wraps(original)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        error: BaseException | None = None
-        result: Any = None
+        streaming = bool(kwargs.get("stream", False))
+
+        if not streaming:
+            error: BaseException | None = None
+            result: Any = None
+            try:
+                result = original(self, *args, **kwargs)
+                return result
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                _emit_single(kind, kwargs, result, error, started)
+
         try:
-            result = original(self, *args, **kwargs)
-            return result
+            original_stream = original(self, *args, **kwargs)
         except BaseException as exc:
-            error = exc
+            _emit_single(kind, kwargs, None, exc, started)
             raise
-        finally:
-            _emit(kind, kwargs, result, error, started)
+
+        consume, finish = _make_accumulator(kind)
+        return TracedSyncStream(
+            original_stream,
+            on_event=consume,
+            on_finish=finish,
+            step_name=f"openai-{kind}:{kwargs.get('model', 'unknown')}",
+            inputs=_input_summary(kwargs),
+            started_at=started,
+        )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
@@ -88,22 +115,46 @@ def _wrap_async(original: Any, kind: str) -> Any:
     @functools.wraps(original)
     async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        error: BaseException | None = None
-        result: Any = None
+        streaming = bool(kwargs.get("stream", False))
+
+        if not streaming:
+            error: BaseException | None = None
+            result: Any = None
+            try:
+                result = await original(self, *args, **kwargs)
+                return result
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                _emit_single(kind, kwargs, result, error, started)
+
         try:
-            result = await original(self, *args, **kwargs)
-            return result
+            original_stream = await original(self, *args, **kwargs)
         except BaseException as exc:
-            error = exc
+            _emit_single(kind, kwargs, None, exc, started)
             raise
-        finally:
-            _emit(kind, kwargs, result, error, started)
+
+        consume, finish = _make_accumulator(kind)
+        return TracedAsyncStream(
+            original_stream,
+            on_event=consume,
+            on_finish=finish,
+            step_name=f"openai-{kind}:{kwargs.get('model', 'unknown')}",
+            inputs=_input_summary(kwargs),
+            started_at=started,
+        )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
 
 
-def _emit(
+# ---------------------------------------------------------------------------
+# Non-streaming Step emission
+# ---------------------------------------------------------------------------
+
+
+def _emit_single(
     kind: str,
     kwargs: dict[str, Any],
     result: Any,
@@ -114,13 +165,7 @@ def _emit(
     if t is None:
         return
 
-    inputs: dict[str, Any] = {
-        "model": kwargs.get("model"),
-        "messages": _summarize_messages(kwargs.get("messages") or kwargs.get("input")),
-        "temperature": kwargs.get("temperature"),
-        "stream": bool(kwargs.get("stream", False)),
-    }
-
+    inputs = _input_summary(kwargs)
     outputs: dict[str, Any] = {}
     if result is not None:
         outputs["text"] = _extract_text(result)
@@ -148,6 +193,78 @@ def _emit(
     )
 
 
+# ---------------------------------------------------------------------------
+# Streaming accumulator
+# ---------------------------------------------------------------------------
+
+
+def _make_accumulator(kind: str) -> tuple[Any, Any]:
+    """Return (on_event, on_finish) for an OpenAI chat or responses stream."""
+    state: dict[str, Any] = {
+        "text_parts": [],
+        "finish_reason": None,
+        "prompt_tokens": None,
+        "completion_tokens": None,
+    }
+
+    def on_event(chunk: Any) -> None:
+        # Chat completions chunk: { choices: [{ delta: { content }, finish_reason }], usage? }
+        choices = getattr(chunk, "choices", None)
+        if isinstance(choices, list) and choices:
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is not None:
+                content = getattr(delta, "content", None)
+                if isinstance(content, str):
+                    state["text_parts"].append(content)
+            fr = getattr(choice, "finish_reason", None)
+            if fr is not None:
+                state["finish_reason"] = fr
+
+        # Some Responses API chunks ship output_text deltas directly
+        out_text = getattr(chunk, "output_text", None)
+        if isinstance(out_text, str):
+            state["text_parts"].append(out_text)
+
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            pt = getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)
+            ct = getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None)
+            if pt is not None:
+                state["prompt_tokens"] = pt
+            if ct is not None:
+                state["completion_tokens"] = ct
+
+    def on_finish() -> dict[str, Any]:
+        outputs: dict[str, Any] = {
+            "text": _truncate("".join(state["text_parts"])),
+            "streamed": True,
+        }
+        if state["finish_reason"] is not None:
+            outputs["finish_reason"] = state["finish_reason"]
+        if state["prompt_tokens"] is not None:
+            outputs["prompt_tokens"] = state["prompt_tokens"]
+        if state["completion_tokens"] is not None:
+            outputs["completion_tokens"] = state["completion_tokens"]
+        return outputs
+
+    return on_event, on_finish
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _input_summary(kwargs: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "model": kwargs.get("model"),
+        "messages": _summarize_messages(kwargs.get("messages") or kwargs.get("input")),
+        "temperature": kwargs.get("temperature"),
+        "stream": bool(kwargs.get("stream", False)),
+    }
+
+
 def _summarize_messages(messages: Any) -> Any:
     if not isinstance(messages, list):
         return _truncate(messages)
@@ -163,7 +280,6 @@ def _summarize_messages(messages: Any) -> Any:
 
 
 def _extract_text(response: Any) -> str | None:
-    # Chat completions: response.choices[0].message.content
     choices = getattr(response, "choices", None)
     if isinstance(choices, list) and choices:
         msg = getattr(choices[0], "message", None)
@@ -171,7 +287,6 @@ def _extract_text(response: Any) -> str | None:
             text = getattr(msg, "content", None)
             if isinstance(text, str):
                 return _truncate(text)
-    # Responses API: response.output_text
     text = getattr(response, "output_text", None)
     if isinstance(text, str):
         return _truncate(text)

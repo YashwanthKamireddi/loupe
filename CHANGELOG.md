@@ -6,9 +6,34 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 
 ### Planned for 0.1.0
 - DuckDB indexer for fast search across many traces
-- Streaming-response support for Anthropic + OpenAI integrations
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
+
+## [0.0.6] — 2026-05-15
+
+### Added
+- **Streaming-response capture** for both Anthropic and OpenAI integrations
+  - New `loupe.integrations._streaming` module with `TracedSyncStream` and
+    `TracedAsyncStream` pass-through proxies
+  - Captures `messages.create(stream=True)` (Anthropic) by accumulating
+    `content_block_delta` text deltas and reading usage from `message_start` /
+    `message_delta` events
+  - Captures `chat.completions.create(stream=True)` (OpenAI) by accumulating
+    `choices[0].delta.content` chunks and reading usage from the final chunk
+  - Streams are pass-through: callers still get each event in real time;
+    Loupe finalizes a single Step when iteration ends or the context exits
+  - `streamed: true` is recorded in step outputs so streaming runs can be filtered
+- `loupe demo` — seed three realistic sample traces (happy path, destructive
+  failure, slow tool-call) plus a pre-baked annotation on the failure so a
+  brand-new install isn't an empty dashboard.
+
+### Changed
+- CI uses `actions/checkout@v5`, `actions/setup-python@v6`, `actions/setup-node@v5`
+  (removes the Node 20 deprecation warnings).
+
+### Verified
+- 36 Python tests pass · 12 TypeScript tests pass · 48 total
+- GitHub Actions: 7/7 jobs green on first push to main
 
 ## [0.0.5] — 2026-05-15
 

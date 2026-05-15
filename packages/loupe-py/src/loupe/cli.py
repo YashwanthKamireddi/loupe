@@ -10,6 +10,7 @@ Commands:
     loupe export [--out FILE]         Bundle annotated failures into LoupeBench JSONL
     loupe report <trace-id> [--out]   Render a shareable markdown case file
     loupe init <name> [--dir PATH]    Scaffold a starter agent project
+    loupe demo                        Seed three sample traces (great for first run)
     loupe doctor                      Diagnose Loupe install + show what's wired up
     loupe version                     Print Loupe version
 """
@@ -30,6 +31,7 @@ from rich.table import Table
 from loupe._version import __version__
 from loupe.annotation import Annotation, AnnotationStore
 from loupe.bench import export_jsonl
+from loupe.demo import seed as demo_seed
 from loupe.report import render_trace_markdown
 from loupe.scaffold import scaffold
 from loupe.store import _default_dir
@@ -276,6 +278,21 @@ def init(
     console.print(f"  cd {display_path}")
     console.print("  python agent.py")
     console.print("  loupe ui")
+
+
+@app.command("demo")
+def demo(
+    no_tag: bool = typer.Option(
+        False, "--no-tag", help="Skip pre-baking an annotation on the failure trace"
+    ),
+) -> None:
+    """Seed three sample traces so the dashboard isn't empty on first run."""
+    ids = demo_seed(tag_failure=not no_tag)
+    console.print(f"[green]seeded[/green] {len(ids)} trace(s):")
+    for trace_id in ids:
+        console.print(f"  [dim]→[/dim] {trace_id[:12]}")
+    console.print()
+    console.print("Now run: [bold]loupe ui[/bold]   (or refresh http://localhost:7860)")
 
 
 @app.command("version")

@@ -10,24 +10,24 @@ Usage:
     @trace(framework="anthropic")
     async def my_agent(q: str) -> str:
         client = anthropic.AsyncAnthropic()
-        msg = await client.messages.create(...)
+        msg = await client.messages.create(model="...", messages=[...])
         return msg.content[0].text
 
-Every messages.create call (sync + async) becomes a Step on the active trace.
-Streaming responses are recorded with stream=True metadata; their token-by-token
-output is not yet aggregated (TODO v0.0.5).
+Captures every `messages.create` call — sync + async, streaming + non-streaming.
+For streaming calls, the wrapper proxies each event back to the caller in real
+time while tee-ing them into an accumulator; the resulting Step is finalized
+when the stream is exhausted (or the caller's `for` loop / `async for` exits).
 """
 
 from __future__ import annotations
 
 import functools
 import time
-from typing import TYPE_CHECKING, Any
+import uuid
+from typing import Any
 
+from loupe.integrations._streaming import TracedAsyncStream, TracedSyncStream
 from loupe.trace import Step, current_trace
-
-if TYPE_CHECKING:
-    pass  # avoid importing anthropic at type-check time
 
 _PATCHED_FLAG = "__loupe_patched__"
 
@@ -56,20 +56,45 @@ def patch() -> bool:
     return changed
 
 
+# ---------------------------------------------------------------------------
+# Wrappers
+# ---------------------------------------------------------------------------
+
+
 def _wrap_sync(original: Any) -> Any:
     @functools.wraps(original)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        error: BaseException | None = None
-        result: Any = None
+        streaming = bool(kwargs.get("stream", False))
+
+        if not streaming:
+            error: BaseException | None = None
+            result: Any = None
+            try:
+                result = original(self, *args, **kwargs)
+                return result
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                _emit_single(kwargs, result, error, started)
+
+        # Streaming path: hand back a transparent proxy that tees into a Step.
         try:
-            result = original(self, *args, **kwargs)
-            return result
+            original_stream = original(self, *args, **kwargs)
         except BaseException as exc:
-            error = exc
+            _emit_single(kwargs, None, exc, started)
             raise
-        finally:
-            _emit(kwargs, result, error, started)
+
+        consume, finish = _make_accumulator(streaming=True)
+        return TracedSyncStream(
+            original_stream,
+            on_event=consume,
+            on_finish=finish,
+            step_name=f"anthropic:{kwargs.get('model', 'unknown')}",
+            inputs=_input_summary(kwargs),
+            started_at=started,
+        )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
@@ -79,34 +104,57 @@ def _wrap_async(original: Any) -> Any:
     @functools.wraps(original)
     async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        error: BaseException | None = None
-        result: Any = None
+        streaming = bool(kwargs.get("stream", False))
+
+        if not streaming:
+            error: BaseException | None = None
+            result: Any = None
+            try:
+                result = await original(self, *args, **kwargs)
+                return result
+            except BaseException as exc:
+                error = exc
+                raise
+            finally:
+                _emit_single(kwargs, result, error, started)
+
+        # Streaming path
         try:
-            result = await original(self, *args, **kwargs)
-            return result
+            original_stream = await original(self, *args, **kwargs)
         except BaseException as exc:
-            error = exc
+            _emit_single(kwargs, None, exc, started)
             raise
-        finally:
-            _emit(kwargs, result, error, started)
+
+        consume, finish = _make_accumulator(streaming=True)
+        return TracedAsyncStream(
+            original_stream,
+            on_event=consume,
+            on_finish=finish,
+            step_name=f"anthropic:{kwargs.get('model', 'unknown')}",
+            inputs=_input_summary(kwargs),
+            started_at=started,
+        )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
 
 
-def _emit(kwargs: dict[str, Any], result: Any, error: BaseException | None, started: float) -> None:
+# ---------------------------------------------------------------------------
+# Non-streaming Step emission
+# ---------------------------------------------------------------------------
+
+
+def _emit_single(
+    kwargs: dict[str, Any],
+    result: Any,
+    error: BaseException | None,
+    started: float,
+) -> None:
     t = current_trace()
     if t is None:
         return
 
-    inputs: dict[str, Any] = {
-        "model": kwargs.get("model"),
-        "max_tokens": kwargs.get("max_tokens"),
-        "system": _truncate(kwargs.get("system")),
-        "messages": _summarize_messages(kwargs.get("messages")),
-        "stream": bool(kwargs.get("stream", False)),
-    }
-
+    inputs = _input_summary(kwargs)
     outputs: dict[str, Any] = {}
     if result is not None:
         outputs["stop_reason"] = getattr(result, "stop_reason", None)
@@ -115,8 +163,6 @@ def _emit(kwargs: dict[str, Any], result: Any, error: BaseException | None, star
         if usage is not None:
             outputs["input_tokens"] = getattr(usage, "input_tokens", None)
             outputs["output_tokens"] = getattr(usage, "output_tokens", None)
-
-    import uuid
 
     t.add_step(
         Step(
@@ -131,6 +177,82 @@ def _emit(kwargs: dict[str, Any], result: Any, error: BaseException | None, star
             error=repr(error) if error is not None else None,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Streaming accumulator
+# ---------------------------------------------------------------------------
+
+
+def _make_accumulator(*, streaming: bool) -> tuple[Any, Any]:
+    """Return (on_event, on_finish) closures for an Anthropic stream.
+
+    Aggregates content_block_delta text deltas, captures usage from
+    message_start and message_delta events, and stop_reason from message_delta.
+    """
+    state: dict[str, Any] = {
+        "text_parts": [],
+        "input_tokens": None,
+        "output_tokens": None,
+        "stop_reason": None,
+    }
+
+    def on_event(event: Any) -> None:
+        etype = getattr(event, "type", None)
+        if etype == "content_block_delta":
+            delta = getattr(event, "delta", None)
+            if delta is not None:
+                # text_delta is the most common; input_json_delta etc. ignored
+                dtype = getattr(delta, "type", None)
+                if dtype == "text_delta":
+                    text = getattr(delta, "text", None)
+                    if isinstance(text, str):
+                        state["text_parts"].append(text)
+        elif etype == "message_start":
+            msg = getattr(event, "message", None)
+            usage = getattr(msg, "usage", None) if msg is not None else None
+            if usage is not None:
+                state["input_tokens"] = getattr(usage, "input_tokens", None)
+        elif etype == "message_delta":
+            usage = getattr(event, "usage", None)
+            if usage is not None:
+                ot = getattr(usage, "output_tokens", None)
+                if ot is not None:
+                    state["output_tokens"] = ot
+            delta = getattr(event, "delta", None)
+            if delta is not None:
+                sr = getattr(delta, "stop_reason", None)
+                if sr is not None:
+                    state["stop_reason"] = sr
+
+    def on_finish() -> dict[str, Any]:
+        outputs: dict[str, Any] = {
+            "text": _truncate("".join(state["text_parts"])),
+            "stop_reason": state["stop_reason"],
+            "streamed": True,
+        }
+        if state["input_tokens"] is not None:
+            outputs["input_tokens"] = state["input_tokens"]
+        if state["output_tokens"] is not None:
+            outputs["output_tokens"] = state["output_tokens"]
+        return outputs
+
+    return on_event, on_finish
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _input_summary(kwargs: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "model": kwargs.get("model"),
+        "max_tokens": kwargs.get("max_tokens"),
+        "system": _truncate(kwargs.get("system")),
+        "messages": _summarize_messages(kwargs.get("messages")),
+        "stream": bool(kwargs.get("stream", False)),
+    }
 
 
 def _summarize_messages(messages: Any) -> Any:
