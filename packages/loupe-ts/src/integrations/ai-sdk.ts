@@ -17,6 +17,7 @@
  * also pass `loupeMiddleware()` into `wrapLanguageModel({ model, middleware })`.
  */
 
+import { redact } from "../_redact.js";
 import { closeStep, currentTrace, openStep } from "../trace.js";
 import type { Step } from "../types.js";
 
@@ -164,8 +165,8 @@ function _summarizeParams(params: unknown): Record<string, unknown> {
   if (!params || typeof params !== "object") return {};
   const p = params as Record<string, unknown>;
   return {
-    prompt: truncate(p.prompt),
-    messages: truncate(p.messages),
+    prompt: truncate(redact(p.prompt)),
+    messages: truncate(redact(p.messages)),
     temperature: p.temperature ?? null,
     maxTokens: p.maxOutputTokens ?? p.maxTokens ?? null,
   };

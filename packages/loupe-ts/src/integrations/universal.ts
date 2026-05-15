@@ -17,6 +17,7 @@
  *   });
  */
 
+import { redact } from "../_redact.js";
 import { closeStep, currentTrace, openStep } from "../trace.js";
 import type { Step } from "../types.js";
 import { detectProviderFromHost, looksLikeOpenAICompatible } from "./_providers.js";
@@ -147,8 +148,9 @@ function summarizeInputs(
   if (body && typeof body === "object") {
     const b = body as Record<string, unknown>;
     if ("model" in b) out.model = b.model;
-    if ("messages" in b) out.messages = truncate(b.messages);
-    if ("prompt" in b) out.prompt = truncate(b.prompt);
+    // Run prompts + messages through the redactor before they hit disk.
+    if ("messages" in b) out.messages = truncate(redact(b.messages));
+    if ("prompt" in b) out.prompt = truncate(redact(b.prompt));
     if ("max_tokens" in b) out.max_tokens = b.max_tokens;
     if ("maxOutputTokens" in b) out.max_tokens = b.maxOutputTokens;
     if (b.stream) out.stream = true;

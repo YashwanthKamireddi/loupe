@@ -7,8 +7,46 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - DuckDB indexer for fast search across many traces
 - Mastra agent framework integration (TS)
-- TypeScript port of the redactor (mirror of `loupe._redact`)
 - SAE-based circuit attribution (the research artifact)
+
+## [0.0.11] — 2026-05-15
+
+### Added — stability & correctness pass
+
+**TypeScript redaction parity (`@loupe/sdk/_redact`):**
+- Bit-for-bit behavior match of the Python `_redact` module — same field-name
+  patterns, same in-string credential patterns, same idempotence + non-mutation
+  guarantees, same depth cap. Class-instance pass-through is explicit (we only
+  walk plain objects).
+- Wired into `universal.ts` (messages + prompt) and `ai-sdk.ts` (params).
+  Credentials in fetch-captured payloads are now scrubbed before the JSONL.
+- 9 vitest tests covering primitive pass-through, every common key style,
+  Bearer + provider token patterns, deep nesting, idempotence, non-mutation,
+  recursion-cap safety, plain-vs-class object distinction.
+
+**Concurrency-safe annotation store:**
+- Read-modify-write paths (`AnnotationStore.add`, `.remove`) now acquire an
+  OS-level advisory lock (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows)
+  for the duration of the operation.
+- Writes are **atomic via tmp + `os.replace`** — readers always see either
+  the previous complete file or the new complete file, never a partial one.
+- Loader is **corruption-tolerant**: a malformed sidecar file returns `[]`
+  instead of crashing the dashboard.
+- 4 new tests, including a true multi-process race (30 worker processes
+  adding annotations to the same trace; all 30 land in the final file).
+
+**Real CLI test suite:**
+- 14 new tests using `typer.testing.CliRunner` cover every public command:
+  welcome screen, `version`, `doctor`, `providers`, `list` (empty + with traces),
+  `show` (known + unknown), `tag`/`untag`/`annotations`, `export` (with and
+  without tagged failures), `report` (stdout + `--out`), `init` (success +
+  refuse-non-empty-dir), `demo`. Forces wide-COLUMNS so Rich tables don't
+  truncate.
+
+### Verified
+- **116 Python + 26 TS = 142 tests, all green.**
+- Lint clean (ruff). Tsc strict clean.
+- CI matrix: py 3.11 / 3.12 / 3.13 + node 20 / 22 / 24 + cross-language gate.
 
 ## [0.0.10] — 2026-05-15
 
