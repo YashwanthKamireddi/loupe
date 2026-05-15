@@ -6,9 +6,12 @@ const els = {
   summary: document.getElementById("trace-summary"),
   stats: document.getElementById("stats"),
   search: document.getElementById("trace-search"),
+  filterBar: document.getElementById("filter-bar"),
   viewer: document.getElementById("viewer"),
   template: document.getElementById("trace-view-tmpl"),
   tagForm: document.getElementById("tag-form-tmpl"),
+  helpButton: document.getElementById("help-button"),
+  helpModal: document.getElementById("help-modal"),
 };
 
 const state = {
@@ -17,6 +20,7 @@ const state = {
   stepIdx: -1,
   traces: [],
   filter: "",
+  statusFilter: "all", // 'all' | 'failed' | 'tagged'
 };
 
 /* ----- formatting helpers ------------------------------------------------ */
@@ -40,6 +44,38 @@ function formatDuration(ms) {
   if (ms < 1) return "<1 ms";
   if (ms < 1000) return `${ms.toFixed(ms < 10 ? 1 : 0)} ms`;
   return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatRelative(unixSec) {
+  if (unixSec == null) return "";
+  const now = Date.now() / 1000;
+  const delta = Math.max(0, now - unixSec);
+  if (delta < 60) return "just now";
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+  if (delta < 604800) return `${Math.floor(delta / 86400)}d ago`;
+  return new Date(unixSec * 1000).toISOString().slice(0, 10);
+}
+
+async function exportCurrentTraceMarkdown() {
+  if (!state.traceId) return;
+  try {
+    const md = await (await fetch(`/api/traces/${state.traceId}/report`)).text();
+    await navigator.clipboard?.writeText(md);
+    flashToast("Markdown report copied to clipboard");
+  } catch (err) {
+    console.error(err);
+    flashToast("Could not copy report");
+  }
+}
+
+function flashToast(msg) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => { el.classList.add("fade"); }, 1400);
+  setTimeout(() => el.remove(), 2000);
 }
 
 function traceDurationMs(t) {
@@ -82,6 +118,8 @@ async function loadTraces() {
 function renderTraceList() {
   const q = state.filter.toLowerCase().trim();
   const filtered = state.traces.filter((t) => {
+    if (state.statusFilter === "failed" && !(t.metadata?.failed)) return false;
+    if (state.statusFilter === "tagged" && !(t.annotation_count > 0)) return false;
     if (!q) return true;
     return (
       (t.name || "").toLowerCase().includes(q) ||
@@ -98,8 +136,12 @@ function renderTraceList() {
     li.style.cursor = "default";
     li.style.color = "var(--ink-3)";
     li.style.fontSize = "var(--t-sm)";
-    li.textContent = state.traces.length === 0 ? "No traces yet." : "No matches.";
     li.style.borderLeft = "none";
+    if (state.traces.length === 0) {
+      li.innerHTML = `<div style="line-height:1.55">No traces yet.<br><span style="color:var(--ink-4)">Try <code style="color:var(--amber)">loupe demo</code> to seed samples.</span></div>`;
+    } else {
+      li.textContent = "No matches.";
+    }
     els.list.appendChild(li);
     return;
   }
@@ -113,12 +155,14 @@ function renderTraceList() {
       ? `<span class="t-tag-pill">${t.annotation_count} tag${t.annotation_count > 1 ? "s" : ""}</span>`
       : "";
     const dur = formatDuration(traceDurationMs(t));
+    const rel = formatRelative(t.started_at);
     li.innerHTML = `
       <div class="t-name">${escapeHtml(t.name)}${tagPill}</div>
       <div class="t-meta">
         <span>${escapeHtml(t.framework || "—")}</span>
         <span>${t.step_count} ${t.step_count === 1 ? "step" : "steps"}</span>
         <span>${dur}</span>
+        <span>${rel}</span>
       </div>
       <div class="t-status ${failed ? "failed" : "ok"}">${failed ? "failed" : "ok"}</div>
     `;
@@ -155,7 +199,10 @@ function renderTrace() {
     <span class="pill">${dur}</span>
     ${annCount > 0 ? `<span class="pill amber">${annCount} tagged</span>` : ""}
     <span class="pill ${failed ? "failed" : "ok"}">${failed ? "failed" : "ok"}</span>
+    <button type="button" class="pill-action" id="export-md" title="Copy markdown report (e)">↗ Export</button>
   `;
+  const exportBtn = document.getElementById("export-md");
+  if (exportBtn) exportBtn.addEventListener("click", exportCurrentTraceMarkdown);
 
   els.viewer.innerHTML = "";
   els.viewer.appendChild(els.template.content.cloneNode(true));
@@ -395,9 +442,32 @@ els.search.addEventListener("input", (e) => {
   renderTraceList();
 });
 
+// Status filter chips
+els.filterBar?.querySelectorAll(".filter-chip").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.statusFilter = btn.dataset.filter;
+    els.filterBar.querySelectorAll(".filter-chip").forEach((b) => {
+      b.classList.toggle("active", b === btn);
+    });
+    renderTraceList();
+  });
+});
+
+// Help modal
+function openHelp() { els.helpModal.hidden = false; }
+function closeHelp() { els.helpModal.hidden = true; }
+els.helpButton?.addEventListener("click", openHelp);
+els.helpModal?.addEventListener("click", (e) => {
+  if (e.target === els.helpModal || e.target.matches("[data-close-modal]")) closeHelp();
+});
+
 document.addEventListener("keydown", (e) => {
-  const tag = document.activeElement?.tagName;
-  if (tag && ["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+  const activeTag = document.activeElement?.tagName;
+  const inInput = activeTag && ["INPUT", "TEXTAREA", "SELECT"].includes(activeTag);
+
+  // Esc always closes modal
+  if (e.key === "Escape") { closeHelp(); return; }
+  if (inInput) return;
 
   // Step navigation: ↑ / ↓ / j / k
   if (["ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) {
@@ -417,15 +487,27 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "t" && state.trace && state.stepIdx >= 0) {
     const detail = els.viewer.querySelector("[data-detail]");
     const tagBtn = detail?.querySelector('[data-action="tag"], [data-action="retag"]');
-    if (tagBtn) {
-      tagBtn.click();
-      e.preventDefault();
-    }
+    if (tagBtn) { tagBtn.click(); e.preventDefault(); }
+    return;
+  }
+
+  // Export markdown: e
+  if (e.key === "e" && state.traceId) {
+    exportCurrentTraceMarkdown();
+    e.preventDefault();
+    return;
   }
 
   // Focus search: /
   if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
     els.search.focus();
+    e.preventDefault();
+    return;
+  }
+
+  // Help: ?
+  if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+    openHelp();
     e.preventDefault();
   }
 });

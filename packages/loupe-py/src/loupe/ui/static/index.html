@@ -32,19 +32,48 @@
       <div class="search">
         <input type="search" id="trace-search" placeholder="filter cases…" autocomplete="off" />
       </div>
+      <div class="filter-bar" id="filter-bar">
+        <button type="button" class="filter-chip active" data-filter="all">All</button>
+        <button type="button" class="filter-chip" data-filter="failed">Failed</button>
+        <button type="button" class="filter-chip" data-filter="tagged">Tagged</button>
+      </div>
       <ul class="trace-list" id="trace-list"></ul>
+      <div class="sidebar-foot">
+        <button type="button" class="btn-ghost" id="help-button" title="Keyboard shortcuts (?)">
+          <span>?</span> Shortcuts
+        </button>
+      </div>
     </aside>
 
     <section class="viewer" id="viewer">
       <div class="empty-state">
         <div class="empty-mark">◉</div>
         <h1 class="empty-title">Inspect agent runs.</h1>
-        <p class="empty-sub">Select a case file from the left.</p>
+        <p class="empty-sub" id="empty-state-sub">Select a case file from the left.</p>
         <pre class="empty-hint">$ pip install 'loupe[ui]'
+$ loupe demo      # seed sample traces
 $ loupe ui</pre>
       </div>
     </section>
   </main>
+
+  <div class="modal-backdrop" id="help-modal" hidden>
+    <div class="modal" role="dialog" aria-labelledby="help-title">
+      <div class="modal-head">
+        <h2 id="help-title">Keyboard shortcuts</h2>
+        <button type="button" class="btn-ghost" data-close-modal>Esc</button>
+      </div>
+      <table class="kbd-table">
+        <tr><td><kbd>↓</kbd> / <kbd>↑</kbd></td><td>Next / previous step</td></tr>
+        <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Vim-style step navigation</td></tr>
+        <tr><td><kbd>t</kbd></td><td>Tag the selected step</td></tr>
+        <tr><td><kbd>e</kbd></td><td>Export current trace as markdown</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Focus the case-file search</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Show this dialog</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close any open dialog</td></tr>
+      </table>
+    </div>
+  </div>
 
   <template id="trace-view-tmpl">
     <div class="trace-view">

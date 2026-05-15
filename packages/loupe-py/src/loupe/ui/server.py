@@ -19,7 +19,7 @@ from typing import Any
 
 try:
     from fastapi import FastAPI, HTTPException
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError as exc:  # pragma: no cover
@@ -29,6 +29,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from loupe.annotation import Annotation, AnnotationStore
+from loupe.report import render_trace_markdown
 from loupe.store import _default_dir
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -144,6 +145,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="trace not found")
         removed = ann_store().remove(path.stem, step_id)
         return JSONResponse({"removed": removed})
+
+    @app.get("/api/traces/{trace_id}/report")
+    def trace_report(trace_id: str) -> PlainTextResponse:
+        """Render the trace as a shareable markdown case file."""
+        path = _find_trace(traces_dir(), trace_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="trace not found")
+        md = render_trace_markdown(path)
+        return PlainTextResponse(md, media_type="text/markdown")
 
     @app.get("/")
     def index() -> FileResponse:
