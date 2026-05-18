@@ -510,8 +510,17 @@ def demo(
 
 
 @app.command("doctor")
-def doctor() -> None:
-    """Diagnose your install + show wired-up integrations."""
+def doctor(
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Also run a full end-to-end smoke test in a tmp dir"
+    ),
+) -> None:
+    """Diagnose your install + show wired-up integrations.
+
+    Pass --smoke to additionally execute a tiny lifecycle (capture → save →
+    load → validate → tag → untag) so you know everything actually works,
+    not just that the packages are importable.
+    """
     home = _default_dir()
     traces = list((home / "traces").glob("*.jsonl")) if (home / "traces").exists() else []
     annots = list((home / "annotations").glob("*.json")) if (home / "annotations").exists() else []
@@ -561,6 +570,147 @@ def doctor() -> None:
         banner("install diagnostic", version=__version__),
         status_table(rows),
     )
+
+    if smoke:
+        _run_smoke_test()
+
+
+def _run_smoke_test() -> None:
+    """Tiny end-to-end lifecycle in a tmp dir. Prints ✓/✗ per step."""
+    import contextlib
+    import json as _json
+    import shutil
+    import tempfile
+    import time as _time
+
+    from loupe import record_step
+    from loupe import trace as trace_fn
+    from loupe.annotation import Annotation, AnnotationStore
+    from loupe.store import JSONLStore
+
+    console.print()
+    console.print(Text("  Running end-to-end smoke test in a tmp dir…", style=DIM))
+    console.print()
+
+    tmp_root = Path(tempfile.mkdtemp(prefix="loupe-smoke-"))
+    try:
+        traces_root = tmp_root / "traces"
+        annotations_root = tmp_root / "annotations"
+        store = JSONLStore(root=traces_root)
+        ann_store = AnnotationStore(root=annotations_root)
+        results: list[tuple[str, bool, str]] = []
+        captured: dict[str, str] = {}
+        t0 = _time.perf_counter()
+
+        # 1. Capture
+        try:
+            @trace_fn(name="smoke", framework="smoke", store=store)
+            def agent() -> None:
+                record_step("thought", "plan")
+                s = record_step("error", "fail", error="planned")
+                if s:
+                    captured["step"] = s.step_id
+                raise RuntimeError("planned smoke failure")
+
+            with contextlib.suppress(RuntimeError):
+                agent()
+            jsonl_files = list(traces_root.glob("*.jsonl"))
+            ok = len(jsonl_files) == 1
+            results.append(("capture trace", ok, f"{len(jsonl_files)} file(s) written"))
+            if not ok:
+                raise AssertionError("capture produced no file")
+            trace_id = jsonl_files[0].stem
+        except Exception as exc:
+            results.append(("capture trace", False, str(exc)))
+            _print_smoke_results(results, _time.perf_counter() - t0)
+            return
+
+        # 2. JSONL parses cleanly
+        try:
+            lines = [_json.loads(line) for line in jsonl_files[0].read_text().splitlines()]
+            parsed_ok = bool(lines) and lines[0].get("_type") == "trace"
+            results.append(("parse JSONL", parsed_ok, f"{len(lines)} line(s)"))
+        except Exception as exc:
+            results.append(("parse JSONL", False, str(exc)))
+
+        # 3. Validate against schema
+        try:
+            schema_path = _find_schema_file()
+            if schema_path is None:
+                results.append(("schema validate", False, "schema file not found"))
+            else:
+                try:
+                    import jsonschema  # type: ignore[import-not-found]
+                except ImportError:
+                    results.append((
+                        "schema validate",
+                        False,
+                        "jsonschema not installed (pip install 'loupe\\[dev]')",
+                    ))
+                else:
+                    schema = _json.loads(schema_path.read_text(encoding="utf-8"))
+                    header: dict = {}
+                    steps: list[dict] = []
+                    for line in jsonl_files[0].open():
+                        obj = _json.loads(line)
+                        kind = obj.pop("_type", None)
+                        if kind == "trace":
+                            header = obj
+                        elif kind == "step":
+                            steps.append(obj)
+                    payload = {**header, "steps": steps}
+                    jsonschema.validate(instance=payload, schema=schema)
+                    results.append(("schema validate", True, "matches v1 contract"))
+        except Exception as exc:
+            results.append(("schema validate", False, str(exc)))
+
+        # 4. Tag + Untag
+        try:
+            step_id = captured.get("step") or ""
+            ann_store.add(Annotation(
+                trace_id=trace_id,
+                step_id=step_id,
+                failure_category="other",
+                notes="smoke",
+            ))
+            loaded = ann_store.load(trace_id)
+            ok = len(loaded) == 1 and ann_store.remove(trace_id, step_id)
+            results.append(("tag + untag", ok, "round-trip clean"))
+        except Exception as exc:
+            results.append(("tag + untag", False, str(exc)))
+
+        elapsed_ms = (_time.perf_counter() - t0) * 1000
+        _print_smoke_results(results, elapsed_ms / 1000)
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def _print_smoke_results(
+    rows: list[tuple[str, bool, str]],
+    elapsed_s: float,
+) -> None:
+    """Render smoke-test results table + the final overall status line."""
+    rendered = [
+        (label, _badge_ready() if ok else _badge_failed(), detail)
+        for label, ok, detail in rows
+    ]
+    console.print(status_table(rendered))
+    console.print()
+    all_ok = all(ok for _, ok, _ in rows)
+    if all_ok:
+        console.print(
+            Text("  ✓ smoke test passed", style=GREEN)
+            + Text(f"  ({elapsed_s * 1000:.0f} ms, {len(rows)} step(s))", style=DIM)
+        )
+    else:
+        failures = sum(1 for _, ok, _ in rows if not ok)
+        console.print(Text(f"  ✗ {failures} smoke step(s) failed.", style=RED))
+        raise typer.Exit(code=1)
+    console.print()
+
+
+def _badge_failed() -> str:
+    return f"[{RED}]✗[/{RED}] fail"
 
 
 @app.command("diff")
