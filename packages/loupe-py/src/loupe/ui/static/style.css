@@ -951,6 +951,11 @@ input, select, textarea {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   transition: opacity 0.4s ease, transform 0.4s ease;
 }
+.toast-error {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: var(--red);
+}
 .toast.fade {
   opacity: 0;
   transform: translateX(-50%) translateY(8px);

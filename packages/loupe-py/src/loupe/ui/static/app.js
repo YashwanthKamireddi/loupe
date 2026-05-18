@@ -69,13 +69,15 @@ async function exportCurrentTraceMarkdown() {
   }
 }
 
-function flashToast(msg) {
+function flashToast(msg, kind = "info") {
   const el = document.createElement("div");
-  el.className = "toast";
+  el.className = "toast" + (kind === "error" ? " toast-error" : "");
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => { el.classList.add("fade"); }, 1400);
-  setTimeout(() => el.remove(), 2000);
+  setTimeout(() => { el.classList.add("fade"); }, kind === "error" ? 2200 : 1400);
+  setTimeout(() => el.remove(), kind === "error" ? 2800 : 2000);
 }
 
 function traceDurationMs(t) {
@@ -109,10 +111,23 @@ async function loadStats() {
 async function loadTraces() {
   state.traces = await (await fetch("/api/traces")).json();
   renderTraceList();
+  updateEmptyState();
   if (state.traces.length > 0 && !state.traceId) {
     openTrace(state.traces[0].trace_id);
   }
   loadStats();
+}
+
+function updateEmptyState() {
+  // Tighten the copy when there genuinely aren't any traces yet vs when
+  // there are some but nothing's selected.
+  const sub = document.getElementById("empty-state-sub");
+  if (!sub) return;
+  if (state.traces.length === 0) {
+    sub.textContent = "No traces yet — run an instrumented agent or use the commands below to seed samples.";
+  } else {
+    sub.textContent = "Select a case file from the left.";
+  }
 }
 
 function renderTraceList() {
@@ -409,10 +424,12 @@ function openTagForm(step, ann) {
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      flashToast(ann ? "Tag updated" : "Tagged for LoupeBench");
       await refresh();
     } catch (err) {
       submitBtn.disabled = false;
       submitBtn.textContent = "Save tag";
+      flashToast("Save failed — check the server log", "error");
       console.error("save failed", err);
     }
   });
@@ -421,7 +438,18 @@ function openTagForm(step, ann) {
 }
 
 async function removeTag(step) {
-  await fetch(`/api/traces/${state.traceId}/annotations/${step.step_id}`, { method: "DELETE" });
+  try {
+    const res = await fetch(
+      `/api/traces/${state.traceId}/annotations/${step.step_id}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    flashToast("Tag removed");
+  } catch (err) {
+    flashToast("Could not remove tag", "error");
+    console.error(err);
+    return;
+  }
   await refresh();
 }
 
