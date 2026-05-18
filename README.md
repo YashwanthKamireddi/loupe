@@ -6,9 +6,11 @@
 
 Open-source forensics + interpretability for LLM agents. Record every step, replay any failure, and build the public benchmark of *why* agents go wrong.
 
+[![CI](https://github.com/YashwanthKamireddi/loupe/actions/workflows/ci.yml/badge.svg)](https://github.com/YashwanthKamireddi/loupe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](#)
+[![Node](https://img.shields.io/badge/node-20%20%7C%2022%20%7C%2024-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-218%20passing-success.svg)](#)
 
 </div>
 
@@ -30,14 +32,47 @@ That's not engineering. That's superstition.
 ## Install (free for everyone)
 
 ```bash
-pip install loupe                # core + CLI
-pip install 'loupe[ui]'          # adds the local web dashboard
-pip install 'loupe[langgraph]'   # adds LangChain / LangGraph integration
-pip install 'loupe[anthropic]'   # adds Anthropic SDK auto-instrumentation
-pip install 'loupe[openai]'      # adds OpenAI SDK auto-instrumentation
+pip install loupe                  # core + CLI
+pip install 'loupe[ui]'            # adds the local web dashboard
+pip install 'loupe[langgraph]'     # LangChain / LangGraph callback handler
+pip install 'loupe[anthropic]'     # Anthropic SDK auto-instrumentation
+pip install 'loupe[openai]'        # OpenAI SDK auto-instrumentation
+pip install 'loupe[pydantic-ai]'   # Pydantic AI auto-instrumentation
+pip install 'loupe[llama-index]'   # LlamaIndex RAG capture
+pip install 'loupe[dspy]'          # DSPy module capture
+pip install 'loupe[crewai]'        # CrewAI multi-agent capture
+pip install 'loupe[autogen]'       # AutoGen ConversableAgent capture
+pip install 'loupe[openhands]'     # OpenHands coding agent capture
+pip install 'loupe[universal]'     # patch ANY httpx-based LLM client
 ```
 
+Or, all at once: `pip install 'loupe[ui,universal,langgraph,anthropic,openai,pydantic-ai,llama-index,dspy,crewai,autogen,openhands]'`
+
 > Loupe is currently in pre-alpha; the canonical install path is `pip install -e .` from this repo until v0.1.
+
+## What you can do (every command)
+
+```text
+loupe                             Welcome screen + quickstart
+loupe start                       Interactive first run: seed samples + open the dashboard
+loupe demo                        Seed three realistic sample traces
+loupe init <name>                 Scaffold a Loupe-instrumented starter project
+loupe ui [--port 7860]            Launch the local forensic dashboard
+loupe list                        List all captured traces in a compact table
+loupe show <trace-id>             Print one trace step-by-step in the terminal
+loupe stats                       Aggregate overview: counts + framework + failure histograms
+loupe diff <a> <b>                Side-by-side step alignment of two traces (A/B comparisons)
+loupe tag <trace> <step> <cat>    Mark a failing step for LoupeBench
+loupe untag <trace> <step>        Remove a tag
+loupe annotations <trace>         List tags on one trace
+loupe export [--out FILE]         Bundle annotated failures into LoupeBench JSONL
+loupe report <trace>              Render a shareable markdown case file (--out FILE)
+loupe report <trace> --html       Render a *standalone single-file HTML viewer* (no CDN, no network)
+loupe verify <trace> | --all      Validate trace(s) against docs/loupe-trace.schema.json
+loupe doctor                      Diagnose your install + every integration's status
+loupe providers                   List all 49 auto-detected LLM provider hosts
+loupe version                     Print Loupe version
+```
 
 ## 30-second quickstart
 
