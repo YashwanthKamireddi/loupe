@@ -512,6 +512,10 @@ def doctor() -> None:
         ("anthropic", "anthropic", "anthropic"),
         ("openai", "openai", "openai"),
         ("pydantic_ai", "pydantic-ai", "pydantic-ai"),
+        ("llama_index", "llama-index", "llama-index"),
+        ("dspy", "dspy", "dspy"),
+        ("crewai", "crewai", "crewai"),
+        ("autogen", "autogen", "autogen"),
         ("httpx", "universal", "universal"),
         ("fastapi", "ui", "ui"),
     ]
@@ -534,6 +538,67 @@ def doctor() -> None:
         banner("install diagnostic", version=__version__),
         status_table(rows),
     )
+
+
+@app.command("verify")
+def verify(
+    trace_id: str = typer.Argument(..., help="Trace id (or prefix) to validate"),
+) -> None:
+    """Validate a captured trace against the canonical JSON schema."""
+    import json as _json
+
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+
+    schema_path = _find_schema_file()
+    if schema_path is None:
+        console.print(
+            Text("  schema file not found.  ", style=RED)
+            + Text("Expected docs/loupe-trace.schema.json relative to the repo root.", style=DIM)
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        import jsonschema  # type: ignore[import-not-found]
+    except ImportError:
+        console.print(
+            Text("  jsonschema not installed.  ", style=RED)
+            + Text("Run: pip install 'loupe\\[dev]'", style=DIM)
+        )
+        raise typer.Exit(code=1) from None
+
+    schema = _json.loads(schema_path.read_text(encoding="utf-8"))
+
+    # Convert JSONL → ingest-shaped object for schema validation
+    header: dict | None = None
+    steps: list[dict] = []
+    for line in path.open():
+        obj = _json.loads(line)
+        kind = obj.pop("_type", None)
+        if kind == "trace":
+            header = obj
+        elif kind == "step":
+            steps.append(obj)
+
+    if header is None:
+        console.print(Text("  malformed trace: no header found", style=RED))
+        raise typer.Exit(code=1)
+
+    payload = {**header, "steps": steps}
+    try:
+        jsonschema.validate(instance=payload, schema=schema)
+    except jsonschema.ValidationError as exc:
+        console.print(Text("  ✗ INVALID", style=RED))
+        console.print(Text(f"    {exc.message}", style=DIM))
+        console.print(Text(f"    path: {'/'.join(str(p) for p in exc.absolute_path)}", style=DIM))
+        raise typer.Exit(code=1) from exc
+
+    console.print(Text("  ✓ valid", style=GREEN))
+    console.print(Text(
+        f"    {path.stem[:12]} · {len(steps)} step(s) · {header.get('name')}",
+        style=DIM,
+    ))
 
 
 @app.command("providers")
@@ -620,6 +685,19 @@ def _no_traces_hint() -> object:
         hint("loupe demo    seed three sample traces"),
         hint("loupe init    scaffold an instrumented project"),
     )
+
+
+def _find_schema_file() -> Path | None:
+    """Walk up from cli.py looking for docs/loupe-trace.schema.json.
+
+    Works in any repo layout — dev source tree, installed sdist, monorepo.
+    """
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "docs" / "loupe-trace.schema.json"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _find_trace(trace_id: str) -> Path | None:

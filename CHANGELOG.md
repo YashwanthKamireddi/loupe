@@ -9,6 +9,51 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.14] — 2026-05-18
+
+### Added — base completeness pass
+
+**One-liner instrumentation: `patch_all()`**
+- `from loupe.integrations import patch_all; patch_all()` turns on every
+  integration whose dependency is installed. Returns a dict reporting which
+  ones flipped on this call. Missing packages are skipped silently.
+- 4 new tests cover return shape, missing-framework safety, idempotence,
+  and pick-up behavior (the last runs in a fresh subprocess to avoid
+  sys.modules pollution from other tests).
+
+**CrewAI integration** (`loupe.integrations.crewai`)
+- Patches `Crew.kickoff` / `kickoff_async`. Captures agent count, task count,
+  the first 8 task descriptions, kickoff inputs, output text, and (when the
+  framework reports it) total token usage.
+
+**AutoGen integration** (`loupe.integrations.autogen`)
+- Patches `ConversableAgent.generate_reply` / `a_generate_reply`. Captures
+  agent name, the message list, reply text. Messages run through the
+  redactor so credentials embedded in turn-by-turn text get scrubbed.
+
+**`loupe verify` CLI command**
+- `loupe verify <trace-id>` validates a captured JSONL trace against the
+  canonical `docs/loupe-trace.schema.json` (Draft-2020-12). Exits 0 + prints
+  a green ✓ on success, exits 1 + prints the schema-path that failed on
+  violation. Auto-locates the schema file by walking up from the package.
+
+**Performance benchmark**
+- `tests/test_performance.py` asserts three hard contracts:
+  - `record_step` averages under 100µs per call inside an active trace
+  - A 10-step trace plus disk write completes in under 5ms (median of 20)
+  - `record_step` with no active trace averages under 5µs (single
+    ContextVar lookup + None check)
+- Performance regression in the hot path now fails the build.
+
+### Tests
+- 155 Python + 27 TypeScript = **182 tests**. Lint + tsc strict clean.
+
+### New extras
+- `pip install 'loupe[llama-index]'`
+- `pip install 'loupe[dspy]'`
+- `pip install 'loupe[crewai]'`
+- `pip install 'loupe[autogen]'`
+
 ## [0.0.13] — 2026-05-15
 
 ### Added — bit-identical cross-language wire format
