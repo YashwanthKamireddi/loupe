@@ -432,12 +432,19 @@ def export(
 def report(
     trace_id: str,
     out: Path | None = typer.Option(None, "--out", "-o"),
+    html_out: bool = typer.Option(
+        False, "--html", help="Render as a standalone single-file HTML viewer"
+    ),
 ) -> None:
-    """Render a shareable markdown case file."""
+    """Render a shareable case file (markdown by default, --html for a viewer)."""
     path = _find_trace(trace_id)
     if path is None:
         raise typer.Exit(code=1)
-    text = render_trace_markdown(path)
+    if html_out:
+        from loupe.report_html import render_trace_html
+        text = render_trace_html(path)
+    else:
+        text = render_trace_markdown(path)
     if out:
         out.write_text(text, encoding="utf-8")
         console.print(Text(f"  ✓ wrote {out}", style=GREEN))

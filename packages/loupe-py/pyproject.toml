@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loupe"
-version = "0.0.21"
+version = "0.0.22"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -76,6 +76,8 @@ select = ["E", "F", "I", "B", "UP", "N", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # typer/click idiomatically uses Option() as default; B008 doesn't apply here.
 "src/loupe/cli.py" = ["B008"]
+# Embedded HTML/CSS/JS — line length is irrelevant inside a string literal.
+"src/loupe/report_html.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

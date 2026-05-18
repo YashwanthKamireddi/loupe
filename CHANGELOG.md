@@ -8,6 +8,22 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.22] — 2026-05-18
+
+### Added
+- **`loupe report --html`** — render a captured trace as a *standalone
+  single-file HTML viewer*. No external CDN, no fonts loaded over the
+  network, no JavaScript dependencies. Double-click the `.html` file to
+  view a failure report offline; share it via email or Slack.
+- The viewer ships the forensic-dossier palette (charcoal + amber), a
+  steps table, annotation cards, top-level error banner, and collapsible
+  inputs/outputs/metadata for each failing step.
+- 3 new tests verify: complete HTML output, no external network deps,
+  annotation card rendering, and the CLI `--html --out FILE` flag.
+
+### Tests
+- 182 Python + 35 TypeScript = **217 tests**. Lint + mypy strict + tsc all clean.
+
 ## [0.0.21] — 2026-05-18
 
 ### Changed
