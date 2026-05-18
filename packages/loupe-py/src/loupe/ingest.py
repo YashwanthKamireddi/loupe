@@ -38,9 +38,29 @@ from loupe.trace import Step, Trace
 
 _ALLOWED_KINDS = {"llm-call", "tool-call", "io", "thought", "error", "custom"}
 
+# Forbidden characters in any id we use as a filename component.
+# `/` and `\` are obvious; null byte breaks pathlib on every OS;
+# control chars break terminal output; `..` is for path traversal.
+_FORBIDDEN_ID_CHARS = frozenset("/\\\x00\n\r\t")
+_MAX_ID_LENGTH = 128
+
 
 class IngestError(ValueError):
     """Raised when an incoming trace document fails validation."""
+
+
+def _validate_safe_id(value: str, label: str) -> None:
+    """Reject ids that can't safely be used as filename components."""
+    if not value:
+        raise IngestError(f"{label} must be non-empty")
+    if len(value) > _MAX_ID_LENGTH:
+        raise IngestError(f"{label} exceeds {_MAX_ID_LENGTH} chars")
+    if any(c in _FORBIDDEN_ID_CHARS for c in value):
+        raise IngestError(
+            f"{label} contains a forbidden character (path separator, null, control)"
+        )
+    if value in ("", ".", "..") or value.startswith("."):
+        raise IngestError(f"{label} cannot be '.', '..' or hidden-dotfile-style")
 
 
 def ingest(payload: dict[str, Any], *, store: JSONLStore | None = None) -> Trace:
@@ -63,6 +83,7 @@ def ingest(payload: dict[str, Any], *, store: JSONLStore | None = None) -> Trace
 
     now = time.time()
     trace_id = str(payload.get("trace_id") or uuid.uuid4().hex)
+    _validate_safe_id(trace_id, "trace_id")
     started_at = float(payload.get("started_at") or now)
     ended_at = (
         float(payload["ended_at"]) if "ended_at" in payload and payload["ended_at"] is not None
@@ -88,9 +109,11 @@ def ingest(payload: dict[str, Any], *, store: JSONLStore | None = None) -> Trace
         s_started = float(raw.get("started_at") or started_at)
         s_ended_raw = raw.get("ended_at")
         s_ended: float | None = float(s_ended_raw) if s_ended_raw is not None else s_started
+        step_id = str(raw.get("step_id") or uuid.uuid4().hex[:12])
+        _validate_safe_id(step_id, f"steps[{idx}].step_id")
         steps.append(
             Step(
-                step_id=str(raw.get("step_id") or uuid.uuid4().hex[:12]),
+                step_id=step_id,
                 parent_step_id=raw.get("parent_step_id"),
                 kind=kind,
                 name=step_name,

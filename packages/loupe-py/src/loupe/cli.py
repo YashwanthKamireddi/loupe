@@ -7,6 +7,7 @@ Commands:
     loupe init <name>                 Scaffold a starter agent project
     loupe providers                   List every LLM provider auto-detected
     loupe stats                       Aggregate overview of captured state
+    loupe diff <a> <b>                Side-by-side diff of two traces
     loupe verify [--all]              Validate trace(s) against the canonical schema
     loupe ui [--port 7860]            Launch the local forensic dashboard
     loupe list                        List all captured traces
@@ -543,6 +544,135 @@ def doctor() -> None:
         banner("install diagnostic", version=__version__),
         status_table(rows),
     )
+
+
+@app.command("diff")
+def diff_cmd(
+    a: str = typer.Argument(..., help="First trace id (or prefix)"),
+    b: str = typer.Argument(..., help="Second trace id (or prefix)"),
+) -> None:
+    """Side-by-side diff of two captured traces — useful for A/B comparisons."""
+    from difflib import SequenceMatcher
+
+    path_a = _find_trace(a)
+    if path_a is None:
+        raise typer.Exit(code=1)
+    path_b = _find_trace(b)
+    if path_b is None:
+        raise typer.Exit(code=1)
+
+    header_a, steps_a = _load_trace(path_a)
+    header_b, steps_b = _load_trace(path_b)
+    if header_a is None or header_b is None:
+        console.print(Text("  malformed trace", style=RED))
+        raise typer.Exit(code=1)
+
+    rows: list[tuple[str, str]] = []
+    rows.append(("trace_id", f"{path_a.stem[:12]}   vs   {path_b.stem[:12]}"))
+    rows.append((
+        "name",
+        f"{header_a.get('name', '?')}   vs   {header_b.get('name', '?')}",
+    ))
+    rows.append((
+        "framework",
+        f"{header_a.get('framework', '—')}   vs   {header_b.get('framework', '—')}",
+    ))
+    rows.append(("steps", f"{len(steps_a)}   vs   {len(steps_b)}"))
+    dur_a = _duration_ms(header_a)
+    dur_b = _duration_ms(header_b)
+    if dur_a is not None and dur_b is not None:
+        delta = dur_b - dur_a
+        sign = "+" if delta >= 0 else ""
+        rows.append((
+            "duration",
+            f"{dur_a:.0f} ms   vs   {dur_b:.0f} ms   ({sign}{delta:.0f} ms)",
+        ))
+    failed_a = bool(header_a.get("metadata", {}).get("failed"))
+    failed_b = bool(header_b.get("metadata", {}).get("failed"))
+    rows.append((
+        "status",
+        ("FAILED" if failed_a else "ok") + "   vs   " + ("FAILED" if failed_b else "ok"),
+    ))
+
+    render_padded(banner("trace diff", version=__version__), kv_table(rows))
+
+    names_a = [s["name"] for s in steps_a]
+    names_b = [s["name"] for s in steps_b]
+    matcher = SequenceMatcher(a=names_a, b=names_b)
+
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    table = Table(
+        show_header=True,
+        header_style=f"dim {DIM}",
+        box=SIMPLE,
+        padding=(0, 2),
+        title=Text("step alignment", style=f"italic {AMBER}"),
+        title_justify="left",
+    )
+    table.add_column("op", width=8)
+    table.add_column(f"{path_a.stem[:8]}", style=INK)
+    table.add_column(f"{path_b.stem[:8]}", style=INK)
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                table.add_row(
+                    Text("=", style=DIM),
+                    Text(names_a[i1 + k], style=DIM),
+                    Text(names_b[j1 + k], style=DIM),
+                )
+        elif tag == "replace":
+            len_a, len_b = i2 - i1, j2 - j1
+            for k in range(max(len_a, len_b)):
+                table.add_row(
+                    Text("~", style=AMBER),
+                    Text(names_a[i1 + k] if k < len_a else "—",
+                         style=AMBER if k < len_a else DIM),
+                    Text(names_b[j1 + k] if k < len_b else "—",
+                         style=AMBER if k < len_b else DIM),
+                )
+        elif tag == "delete":
+            for k in range(i2 - i1):
+                table.add_row(
+                    Text("-", style=RED),
+                    Text(names_a[i1 + k], style=RED),
+                    Text("—", style=DIM),
+                )
+        elif tag == "insert":
+            for k in range(j2 - j1):
+                table.add_row(
+                    Text("+", style=GREEN),
+                    Text("—", style=DIM),
+                    Text(names_b[j1 + k], style=GREEN),
+                )
+
+    console.print(table)
+    console.print()
+
+
+def _load_trace(path: Path) -> tuple[dict | None, list[dict]]:
+    import json as _json
+
+    header: dict | None = None
+    steps: list[dict] = []
+    for line in path.open():
+        obj = _json.loads(line)
+        kind = obj.pop("_type", None)
+        if kind == "trace":
+            header = obj
+        elif kind == "step":
+            steps.append(obj)
+    return header, steps
+
+
+def _duration_ms(header: dict) -> float | None:
+    started = header.get("started_at")
+    ended = header.get("ended_at")
+    if started is None or ended is None:
+        return None
+    return max(0.0, (ended - started) * 1000)
 
 
 @app.command("stats")

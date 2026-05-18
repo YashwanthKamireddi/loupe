@@ -93,15 +93,18 @@ def test_redact_preserves_outer_type_shape(value: Any) -> None:
 @given(value=json_value)
 @settings(max_examples=200, deadline=None)
 def test_redact_never_introduces_credentials(value: Any) -> None:
-    """If the input contains no credential-shaped strings, output shouldn't either."""
-    if not _contains_credential(value):
+    """If the input contains no credentials AND no '[redacted]' sentinel,
+    output shouldn't either. The sentinel-in-input case is a degenerate edge
+    we explicitly exclude — the redactor's contract is to never *invent* one."""
+    if (
+        not _contains_credential(value)
+        and not _has_secret_keys(value)
+        and not _contains_redacted_string(value)
+    ):
         out = redact(value)
-        # And the [redacted] sentinel should only appear if a known-secret
-        # key name triggered scrubbing.
-        if not _has_secret_keys(value):
-            assert not _contains_redacted_string(out), (
-                f"redact introduced '[redacted]' into clean input: {value} -> {out}"
-            )
+        assert not _contains_redacted_string(out), (
+            f"redact introduced '[redacted]' into clean input: {value} -> {out}"
+        )
 
 
 # -- helpers --
@@ -118,12 +121,12 @@ def _contains_credential(value: Any) -> bool:
 
 
 def _has_secret_keys(value: Any) -> bool:
-    secret_words = ("authorization", "api_key", "apikey", "secret",
-                    "token", "password", "bearer", "private_key",
-                    "access_key", "x-auth", "x_auth")
+    """Use the exact regex the redactor uses — anything else is a footgun."""
+    from loupe._redact import _SECRET_NAME_PATTERNS
+
     if isinstance(value, dict):
         for k, v in value.items():
-            if isinstance(k, str) and any(s in k.lower() for s in secret_words):
+            if isinstance(k, str) and _SECRET_NAME_PATTERNS.search(k):
                 return True
             if _has_secret_keys(v):
                 return True

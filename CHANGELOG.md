@@ -8,6 +8,28 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.19] — 2026-05-18
+
+### Added
+- **`loupe diff <a> <b>`** — side-by-side comparison of two traces. Header
+  row shows trace_id, name, framework, step count, duration delta, status.
+  Step alignment uses `difflib.SequenceMatcher` over step names: `=` for
+  matching steps, `~` for replaced, `-` for removed, `+` for inserted. The
+  workflow for "did my prompt change make things better or worse?".
+
+### Fixed (caught by hypothesis property tests)
+- **Trace IDs and step IDs are now path-safety-validated at ingest.** A
+  trace_id containing `/`, `\`, null byte, control chars, or `..` is now a
+  clean `IngestError` instead of an unhandled `ValueError` from pathlib.
+  Same for step_id. Max 128 chars enforced. The fuzzer found this case in
+  the wild — exactly what property tests are for.
+- One redactor property test had an edge case where the input contained
+  the literal `[redacted]` string; the property now explicitly excludes
+  that degenerate case from its precondition.
+
+### Tests
+- 171 Python + 35 TypeScript = **206 tests**, all green.
+
 ## [0.0.18] — 2026-05-18
 
 ### Added — Mastra integration (final TS framework gap closed)
