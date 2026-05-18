@@ -6,8 +6,43 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 
 ### Planned for 0.1.0
 - DuckDB indexer for fast search across many traces
-- Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
+
+## [0.0.18] — 2026-05-18
+
+### Added — Mastra integration (final TS framework gap closed)
+- **`@loupe/sdk/mastra` — `patchMastraAgent(Agent)`** captures every
+  `agent.generate(...)` and `agent.stream(...)` call on every instance.
+  Records agent name, model id, method, prompt (redacted), the standard
+  option fields, response text, finish reason, token usage, tool step count.
+  Errors get the agent identifier in the Step name. New subpath export.
+- 4 vitest tests (sync generate, async stream, prompt redaction, error capture).
+
+### Tests
+- 171 Python + 35 TypeScript = **206 tests**, all green.
+
+## [0.0.17] — 2026-05-18
+
+### Added — property-based proof + stats overview
+- **`loupe stats`** CLI: aggregate overview — trace count, failure rate,
+  step count, tags, median duration, framework histogram, failure-category
+  histogram.
+- **`tests/test_redact_property.py`** — 5 properties × ~400 hypothesis-
+  generated inputs verify redactor: never raises, idempotent, non-mutating,
+  type-preserving, never invents `[redacted]` in clean inputs.
+- **`tests/test_ingest_property.py`** — generated payloads verify ingest
+  either succeeds or raises `IngestError` with a non-empty message. No
+  other exception type may escape.
+- Hypothesis added to the `dev` extra.
+
+## [0.0.16] — 2026-05-18
+
+### Added
+- **`loupe._telemetry`** — `shielded()` ctx manager, `call_safe()` helper,
+  `emit()` function. Caught exceptions in Loupe's own instrumentation
+  surface as `LoupeTelemetryWarning` — filterable, observable, but never
+  thrown into user code.
+- `openhands` extra populated.
 
 ## [0.0.15] — 2026-05-18
 
