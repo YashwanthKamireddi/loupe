@@ -32,4 +32,4 @@ export type {
   TraceStore,
 } from "./types.js";
 
-export const VERSION = "0.0.11";
+export const VERSION = "0.0.13";

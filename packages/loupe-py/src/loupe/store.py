@@ -42,12 +42,14 @@ class JSONLStore:
 
     def save(self, trace: Trace) -> None:
         path = self.root / f"{trace.trace_id}.jsonl"
+        # Compact separators (no spaces) so the wire format is bit-identical
+        # to JSON.stringify(...) in the TypeScript SDK — see SPEC.md §6.
         with path.open("w", encoding="utf-8") as f:
             header: dict[str, Any] = dataclasses.asdict(trace)
             steps = header.pop("steps", [])
-            f.write(json.dumps({"_type": "trace", **header}) + "\n")
+            f.write(json.dumps({"_type": "trace", **header}, separators=(",", ":")) + "\n")
             for step in steps:
-                f.write(json.dumps({"_type": "step", **step}) + "\n")
+                f.write(json.dumps({"_type": "step", **step}, separators=(",", ":")) + "\n")
 
 
 _default: Store | None = None

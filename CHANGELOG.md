@@ -9,6 +9,33 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.13] — 2026-05-15
+
+### Added — bit-identical cross-language wire format
+- **Python serializer now uses compact separators** (`json.dumps(..., separators=(",", ":"))`)
+  so the output matches `JSON.stringify(...)` defaults in the TypeScript SDK.
+- **Canonical fixture rewritten** with fractional timestamps to sidestep the
+  `1.0`/`1` divergence between Python's `json.dumps` and JS's `JSON.stringify`.
+- **`packages/loupe-ts/tests/wire-format-snapshot.test.ts`** — TypeScript
+  snapshot test that builds the same Trace as the Python fixture and asserts
+  bit-identical bytes. Cross-language drift is now a CI failure in either
+  language. This makes `docs/SPEC.md` § 6 self-enforcing.
+
+### Added — more agent frameworks
+- **LlamaIndex integration** (`loupe.integrations.llama_index`) — patches
+  `BaseQueryEngine.query` / `.aquery` so every RAG call lands as a Step.
+  Captures query string, engine class, response text, and source-document
+  count. Queries pass through the redactor.
+- **DSPy integration** (`loupe.integrations.dspy`) — patches
+  `dspy.Module.__call__` (with `Program` fallback for older versions).
+  Captures module class, kwargs (redacted), positional args (redacted),
+  and prediction fields. Works across all DSPy module subclasses (Predict,
+  ChainOfThought, ReAct, custom).
+- 5 new tests across the two integrations (sync, async, redaction).
+
+### Tests
+- 143 Python + 27 TypeScript = **170 tests**. Lint + tsc strict clean.
+
 ## [0.0.12] — 2026-05-15
 
 ### Added — base proof + 2026 framework coverage

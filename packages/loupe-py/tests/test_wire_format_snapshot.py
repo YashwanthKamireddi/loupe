@@ -20,21 +20,26 @@ FIXTURE = Path(__file__).parent / "fixtures" / "canonical_trace.jsonl"
 
 
 def _build_fixture_trace() -> Trace:
-    """Build the exact Trace the fixture file represents."""
+    """Build the exact Trace the fixture file represents.
+
+    Numbers are fractional on purpose: JSON.stringify(1.0) → "1" in JS
+    but json.dumps(1.0) → "1.0" in Python. Using non-whole-number values
+    sidesteps the disagreement and keeps the wire format bit-identical.
+    """
     return Trace(
         trace_id="abc123def456abc123def456abc12345",
         name="snapshot-fixture",
         framework="test",
-        started_at=1.0,
-        ended_at=2.0,
+        started_at=1.001,
+        ended_at=2.001,
         steps=[
             Step(
                 step_id="s00000000001",
                 parent_step_id=None,
                 kind="thought",
                 name="plan",
-                started_at=1.1,
-                ended_at=1.2,
+                started_at=1.101,
+                ended_at=1.201,
                 inputs={},
                 outputs={"plan": "do thing"},
                 metadata={},
@@ -45,8 +50,8 @@ def _build_fixture_trace() -> Trace:
                 parent_step_id=None,
                 kind="llm-call",
                 name="anthropic:claude-haiku-4-5",
-                started_at=1.3,
-                ended_at=1.9,
+                started_at=1.301,
+                ended_at=1.901,
                 inputs={"prompt": "hi", "model": "claude-haiku-4-5"},
                 outputs={"text": "hello", "input_tokens": 5, "output_tokens": 2},
                 metadata={},
