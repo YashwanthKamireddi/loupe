@@ -339,3 +339,66 @@ def test_diff_unknown_trace_exits_nonzero(
     a = _seed_one_trace(loupe_home)
     result = runner.invoke(app, ["diff", a[:12], "deadbeefdead"])
     assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# doctor --smoke + ui port handling
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_smoke_runs_lifecycle(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """--smoke runs a 4-step end-to-end check inside a tmp dir and exits 0."""
+    pytest.importorskip("jsonschema")
+    result = runner.invoke(app, ["doctor", "--smoke"])
+    assert result.exit_code == 0, result.output
+    assert "capture trace" in result.output
+    assert "parse JSONL" in result.output
+    assert "schema validate" in result.output
+    assert "tag + untag" in result.output
+    assert "smoke test passed" in result.output
+
+
+def test_ui_no_auto_port_exits_when_busy(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """With --no-auto-port, a busy port produces a clean error + exit 1."""
+    import socket as _socket
+
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+        result = runner.invoke(
+            app, ["ui", "--port", str(port), "--no-auto-port"]
+        )
+        assert result.exit_code == 1
+        assert "already in use" in result.output
+        assert "Traceback" not in result.output
+    finally:
+        sock.close()
+
+
+def test_ui_auto_port_walks_forward(
+    loupe_home: Path,
+) -> None:
+    """The port resolver walks forward when the start port is busy."""
+    import socket as _socket
+
+    from loupe.cli import _resolve_port
+
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        busy = sock.getsockname()[1]
+        resolved = _resolve_port("127.0.0.1", busy, search=True)
+        assert resolved is not None
+        assert resolved != busy
+        assert busy < resolved <= busy + 9
+    finally:
+        sock.close()
