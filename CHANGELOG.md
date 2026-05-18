@@ -8,6 +8,26 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.29] — 2026-05-18
+
+### Added — CLI test coverage for the latest behavior
+
+- `test_doctor_smoke_runs_lifecycle` — asserts `loupe doctor --smoke`
+  exits 0, prints every lifecycle step name, and emits the
+  "smoke test passed" summary line.
+- `test_ui_no_auto_port_exits_when_busy` — opens a real socket on an
+  ephemeral port, invokes `loupe ui --port <busy> --no-auto-port`,
+  asserts exit 1 with the "already in use" message and no Python
+  traceback in output.
+- `test_ui_auto_port_walks_forward` — calls `_resolve_port` directly
+  with a busy start port and asserts it returns a free port in
+  `(start, start+9]`.
+
+### Tests
+
+- 186 Python + 35 TypeScript = **221 tests total**.
+- Lint, mypy strict, and tsc strict all clean.
+
 ## [0.0.23] — 2026-05-18
 
 ### Changed — UX polish pass
