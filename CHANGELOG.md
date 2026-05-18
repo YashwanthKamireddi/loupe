@@ -9,6 +9,45 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Mastra agent framework integration (TS)
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.15] — 2026-05-18
+
+### Added — installable-everywhere base + framework breadth
+
+**JSON schema embedded as package data**
+- `docs/loupe-trace.schema.json` is now also shipped at
+  `loupe/_data/loupe-trace.schema.json`. `loupe verify` works after a plain
+  `pip install loupe` — no source tree required.
+- Schema lookup prefers the embedded copy and falls back to the dev tree
+  for monorepo editable installs.
+
+**`loupe verify --all`**
+- One command validates every captured trace under `~/.loupe/traces/` against
+  the schema. Prints a green ✓ per trace, a red ✗ with the exact failing
+  path + message otherwise. Exits non-zero if any fail.
+
+**OpenHands integration** (`loupe.integrations.openhands`)
+- Patches `openhands.controller.agent.Agent.step` (sync + async,
+  auto-detected). Captures agent name, iteration number, returned action
+  class, the agent's `thought`, and common action fields (command, path,
+  url, code, content). All free-text fields run through the redactor.
+- Tries the current module path and falls back to the legacy
+  `opendevin.controller.agent` location for older installs.
+- 3 new tests including a credential-redaction case.
+
+**TypeScript `patchAll()` mirror**
+- `@loupe/sdk/integrations` now ships a `patchAll()` helper that mirrors
+  Python's `loupe.integrations.patch_all`. Same dict-return contract;
+  enables `universal-fetch` automatically wherever `globalThis.fetch`
+  exists (Node 18+, modern browsers, Deno, Bun).
+- 4 vitest tests verify shape, presence-on-fetch-availability, idempotence,
+  and absence-of-missing-deps.
+
+### Tests
+- 158 Python + 31 TypeScript = **189 tests**. Lint + tsc strict clean.
+
+### New extras
+- `pip install 'loupe[openhands]'`
+
 ## [0.0.14] — 2026-05-18
 
 ### Added — base completeness pass

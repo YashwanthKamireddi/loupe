@@ -26,6 +26,7 @@ _INTEGRATIONS: list[tuple[str, str, str]] = [
     ("dspy", "loupe.integrations.dspy", "dspy"),
     ("crewai", "loupe.integrations.crewai", "crewai"),
     ("autogen", "loupe.integrations.autogen", "autogen"),
+    ("openhands", "loupe.integrations.openhands", "openhands"),
     ("universal-httpx", "loupe.integrations.httpx", "httpx"),
 ]
 

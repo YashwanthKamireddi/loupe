@@ -27,6 +27,7 @@ import os
 import sys
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.text import Text
@@ -516,6 +517,7 @@ def doctor() -> None:
         ("dspy", "dspy", "dspy"),
         ("crewai", "crewai", "crewai"),
         ("autogen", "autogen", "autogen"),
+        ("openhands", "openhands", "openhands"),
         ("httpx", "universal", "universal"),
         ("fastapi", "ui", "ui"),
     ]
@@ -542,23 +544,20 @@ def doctor() -> None:
 
 @app.command("verify")
 def verify(
-    trace_id: str = typer.Argument(..., help="Trace id (or prefix) to validate"),
+    trace_id: str = typer.Argument(
+        "",
+        help="Trace id (or prefix). Omit and use --all to check every trace.",
+    ),
+    check_all: bool = typer.Option(False, "--all", help="Validate every captured trace"),
 ) -> None:
-    """Validate a captured trace against the canonical JSON schema."""
-    import json as _json
-
-    path = _find_trace(trace_id)
-    if path is None:
-        raise typer.Exit(code=1)
-
+    """Validate one or all captured traces against the canonical JSON schema."""
     schema_path = _find_schema_file()
     if schema_path is None:
         console.print(
             Text("  schema file not found.  ", style=RED)
-            + Text("Expected docs/loupe-trace.schema.json relative to the repo root.", style=DIM)
+            + Text("Reinstall loupe so the bundled schema is restored.", style=DIM)
         )
         raise typer.Exit(code=1)
-
     try:
         import jsonschema  # type: ignore[import-not-found]
     except ImportError:
@@ -568,37 +567,89 @@ def verify(
         )
         raise typer.Exit(code=1) from None
 
+    import json as _json
+
     schema = _json.loads(schema_path.read_text(encoding="utf-8"))
 
-    # Convert JSONL → ingest-shaped object for schema validation
-    header: dict | None = None
-    steps: list[dict] = []
-    for line in path.open():
-        obj = _json.loads(line)
-        kind = obj.pop("_type", None)
-        if kind == "trace":
-            header = obj
-        elif kind == "step":
-            steps.append(obj)
+    targets: list[Path]
+    if check_all:
+        traces_dir = _default_dir() / "traces"
+        targets = sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []
+        if not targets:
+            console.print(Text("  no traces to verify.", style=DIM))
+            return
+    else:
+        if not trace_id:
+            console.print(Text("  pass a trace id, or use --all.", style=RED))
+            raise typer.Exit(code=1)
+        path = _find_trace(trace_id)
+        if path is None:
+            raise typer.Exit(code=1)
+        targets = [path]
 
-    if header is None:
-        console.print(Text("  malformed trace: no header found", style=RED))
+    failures = 0
+    for target in targets:
+        ok, payload, err = _validate_trace_file(target, schema, jsonschema)
+        label = target.stem[:12]
+        name = (payload or {}).get("name", "?")
+        step_count = len((payload or {}).get("steps", []))
+        if ok:
+            console.print(
+                Text("  ✓ ", style=GREEN)
+                + Text(f"{label} · {step_count} step(s) · {name}", style=INK)
+            )
+        else:
+            failures += 1
+            console.print(
+                Text("  ✗ ", style=RED)
+                + Text(f"{label} · {name}", style=INK)
+                + Text(f"  — {err}", style=DIM)
+            )
+
+    if failures:
+        console.print()
+        console.print(
+            Text(
+                f"  {failures} of {len(targets)} trace(s) failed validation.",
+                style=RED,
+            )
+        )
         raise typer.Exit(code=1)
 
+
+def _validate_trace_file(
+    path: Path,
+    schema: dict,
+    jsonschema_mod: Any,
+) -> tuple[bool, dict | None, str | None]:
+    """Read a JSONL trace, convert to ingest payload shape, validate.
+
+    Returns (ok, payload-or-None, error-message-or-None).
+    """
+    import json as _json
+
+    header: dict | None = None
+    steps: list[dict] = []
+    try:
+        for line in path.open():
+            obj = _json.loads(line)
+            kind = obj.pop("_type", None)
+            if kind == "trace":
+                header = obj
+            elif kind == "step":
+                steps.append(obj)
+    except (OSError, _json.JSONDecodeError) as exc:
+        return False, None, f"unreadable: {exc}"
+
+    if header is None:
+        return False, None, "no trace header"
     payload = {**header, "steps": steps}
     try:
-        jsonschema.validate(instance=payload, schema=schema)
-    except jsonschema.ValidationError as exc:
-        console.print(Text("  ✗ INVALID", style=RED))
-        console.print(Text(f"    {exc.message}", style=DIM))
-        console.print(Text(f"    path: {'/'.join(str(p) for p in exc.absolute_path)}", style=DIM))
-        raise typer.Exit(code=1) from exc
-
-    console.print(Text("  ✓ valid", style=GREEN))
-    console.print(Text(
-        f"    {path.stem[:12]} · {len(steps)} step(s) · {header.get('name')}",
-        style=DIM,
-    ))
+        jsonschema_mod.validate(instance=payload, schema=schema)
+    except jsonschema_mod.ValidationError as exc:
+        loc = "/".join(str(p) for p in exc.absolute_path) or "(root)"
+        return False, payload, f"{exc.message} at {loc}"
+    return True, payload, None
 
 
 @app.command("providers")

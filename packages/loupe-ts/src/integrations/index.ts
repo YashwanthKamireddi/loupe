@@ -1,0 +1,40 @@
+/**
+ * Single-import entry point for every TypeScript integration.
+ *
+ * Today this re-exports the two integrations + a `patchAll()` helper that
+ * turns on every one whose dependency is installed (mirror of the Python
+ * `loupe.integrations.patch_all`).
+ *
+ * @example
+ *   import { patchAll } from "@loupe/sdk/integrations";
+ *   const report = await patchAll();   // { "universal-fetch": true }
+ */
+
+import { patchFetch } from "./universal.js";
+
+export { patchFetch, wrapFetch } from "./universal.js";
+export { loupeMiddleware, wrapModel } from "./ai-sdk.js";
+
+/**
+ * Turn on every integration whose dependency is installed. Idempotent.
+ *
+ * Returns a record mapping integration name → bool (true if patched this
+ * call, false if it was already patched). Integrations whose dependency
+ * isn't available are absent entirely.
+ *
+ * For the TS SDK this is currently small — Vercel AI SDK is opt-in via
+ * `wrapModel(...)` not a global patch, so the only "always-on" patch is
+ * the universal fetch one. The shape matches Python `patch_all()` so
+ * cross-language code can rely on the same contract.
+ */
+export async function patchAll(): Promise<Record<string, boolean>> {
+  const report: Record<string, boolean> = {};
+
+  // Universal fetch: capture every LLM provider call regardless of SDK.
+  // Always available — globalThis.fetch is built-in on Node 18+ and browsers.
+  if (typeof (globalThis as { fetch?: unknown }).fetch === "function") {
+    report["universal-fetch"] = patchFetch();
+  }
+
+  return report;
+}

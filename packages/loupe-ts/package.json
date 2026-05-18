@@ -1,6 +1,6 @@
 {
   "name": "@loupe/sdk",
-  "version": "0.0.13",
+  "version": "0.0.15",
   "description": "A magnifying glass for your AI agent — TypeScript SDK.",
   "license": "MIT",
   "author": "Yashwanth Kamireddi",
@@ -38,6 +38,11 @@
       "types": "./dist/integrations/universal.d.ts",
       "import": "./dist/integrations/universal.js",
       "require": "./dist/integrations/universal.cjs"
+    },
+    "./integrations": {
+      "types": "./dist/integrations/index.d.ts",
+      "import": "./dist/integrations/index.js",
+      "require": "./dist/integrations/index.cjs"
     }
   },
   "files": [
