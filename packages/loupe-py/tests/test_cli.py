@@ -242,3 +242,86 @@ def test_demo_seeds_traces(runner: CliRunner, loupe_home: Path) -> None:
     assert "happy-summary-agent" in list_result.output \
         or "auth-refactor-agent" in list_result.output \
         or "data-loader-agent" in list_result.output
+
+
+# ---------------------------------------------------------------------------
+# verify / stats / diff
+# ---------------------------------------------------------------------------
+
+
+def test_verify_single_trace_succeeds(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    pytest.importorskip("jsonschema")
+    trace_id = _seed_one_trace(loupe_home)
+    result = runner.invoke(app, ["verify", trace_id[:12]])
+    assert result.exit_code == 0
+    assert "✓" in result.output
+    assert "cli-test-agent" in result.output
+
+
+def test_verify_with_all_flag_validates_every_trace(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    pytest.importorskip("jsonschema")
+    _seed_one_trace(loupe_home)
+    # Make a second trace too
+    _seed_one_trace(loupe_home)
+    result = runner.invoke(app, ["verify", "--all"])
+    assert result.exit_code == 0
+    # Two ✓ lines for two traces
+    assert result.output.count("✓") >= 2
+
+
+def test_verify_requires_id_or_all_flag(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    result = runner.invoke(app, ["verify"])
+    assert result.exit_code == 1
+    assert "pass a trace id" in result.output or "trace id" in result.output
+
+
+def test_verify_unknown_trace_exits_nonzero(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    pytest.importorskip("jsonschema")
+    result = runner.invoke(app, ["verify", "doesnotexist"])
+    assert result.exit_code == 1
+
+
+def test_stats_with_traces(runner: CliRunner, loupe_home: Path) -> None:
+    _seed_one_trace(loupe_home)
+    _seed_one_trace(loupe_home)
+    result = runner.invoke(app, ["stats"])
+    assert result.exit_code == 0
+    # Numbers + section headings
+    assert "traces" in result.output
+    assert "failed" in result.output
+    assert "by framework" in result.output
+
+
+def test_stats_empty_home(runner: CliRunner, loupe_home: Path) -> None:
+    result = runner.invoke(app, ["stats"])
+    assert result.exit_code == 0
+    # Empty home should show the "no traces" hint
+    assert "No traces yet" in result.output or "no traces" in result.output.lower()
+
+
+def test_diff_two_traces(runner: CliRunner, loupe_home: Path) -> None:
+    a = _seed_one_trace(loupe_home)
+    b = _seed_one_trace(loupe_home)
+    assert a != b
+    result = runner.invoke(app, ["diff", a[:12], b[:12]])
+    assert result.exit_code == 0
+    assert "trace diff" in result.output
+    assert "step alignment" in result.output
+    # Two seeded traces have identical step names, so all rows should be equal.
+    assert "cli-test-agent" in result.output
+
+
+def test_diff_unknown_trace_exits_nonzero(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    a = _seed_one_trace(loupe_home)
+    result = runner.invoke(app, ["diff", a[:12], "deadbeefdead"])
+    assert result.exit_code == 1

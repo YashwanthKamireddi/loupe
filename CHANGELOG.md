@@ -8,6 +8,17 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.20] — 2026-05-18
+
+### Added — CLI test coverage for the new commands
+- 8 new `typer.testing.CliRunner` tests pin the behavior of `loupe verify`
+  (single + `--all` + missing-arg + unknown-trace paths), `loupe stats`
+  (populated + empty home), and `loupe diff` (success + unknown trace).
+- 179 Python tests in total now, up from 171.
+
+### Tests
+- 179 Python + 35 TypeScript = **214 tests**, all green.
+
 ## [0.0.19] — 2026-05-18
 
 ### Added
