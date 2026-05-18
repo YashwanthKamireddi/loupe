@@ -290,12 +290,16 @@ def show_trace(trace_id: str) -> None:
 def ui(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
     port: int = typer.Option(7860, help="Bind port"),
+    auto_port: bool = typer.Option(
+        True, "--auto-port/--no-auto-port",
+        help="If the chosen port is busy, try the next 9 ports before giving up.",
+    ),
 ) -> None:
     """Launch the local forensic dashboard."""
-    _run_ui(host=host, port=port)
+    _run_ui(host=host, port=port, auto_port=auto_port)
 
 
-def _run_ui(*, host: str, port: int) -> None:
+def _run_ui(*, host: str, port: int, auto_port: bool = True) -> None:
     try:
         import uvicorn
 
@@ -307,11 +311,50 @@ def _run_ui(*, host: str, port: int) -> None:
         )
         raise typer.Exit(code=1) from None
 
+    bind_port = _resolve_port(host, port, search=auto_port)
+    if bind_port is None:
+        return  # _resolve_port printed the error and we want a clean exit
+
     url_text = Text()
     url_text.append("  ◉ Loupe ", style=AMBER)
-    url_text.append(f"http://{host}:{port}", style=f"bold {INK}")
+    url_text.append(f"http://{host}:{bind_port}", style=f"bold {INK}")
+    if bind_port != port:
+        url_text.append(f"  (port {port} was busy)", style=DIM)
     console.print(url_text)
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    try:
+        uvicorn.run(create_app(), host=host, port=bind_port, log_level="warning")
+    except KeyboardInterrupt:
+        console.print()
+        console.print(Text("  Stopped.", style=DIM))
+
+
+def _resolve_port(host: str, start: int, *, search: bool) -> int | None:
+    """Return the first free port in [start, start+9] (or just `start` if not searching).
+
+    Prints a clean error and returns None if nothing's available — caller exits cleanly.
+    """
+    import socket
+
+    candidates = range(start, start + 10) if search else (start,)
+    for candidate in candidates:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, candidate))
+            except OSError:
+                continue
+            return candidate
+
+    if search:
+        console.print(
+            Text(f"  All ports {start}..{start + 9} on {host} are busy.", style=RED)
+        )
+    else:
+        console.print(
+            Text(f"  Port {start} on {host} is already in use.", style=RED)
+            + Text("  Try a different --port.", style=DIM)
+        )
+    raise typer.Exit(code=1)
 
 
 # ----------------------------------------------------------------------------
