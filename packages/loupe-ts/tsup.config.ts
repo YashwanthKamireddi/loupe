@@ -6,6 +6,7 @@ export default defineConfig({
     "integrations/index": "src/integrations/index.ts",
     "integrations/ai-sdk": "src/integrations/ai-sdk.ts",
     "integrations/universal": "src/integrations/universal.ts",
+    "integrations/mastra": "src/integrations/mastra.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
