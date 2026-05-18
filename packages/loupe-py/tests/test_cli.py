@@ -35,8 +35,19 @@ def loupe_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _seed_one_trace(home: Path) -> str:
+    """Seed exactly one trace and return THAT trace's id.
+
+    `glob` order is not insertion-order on most filesystems, so we snapshot
+    the directory before the run and diff to find the new file. Otherwise
+    repeated calls would all return whichever file glob happens to surface
+    first — silently breaking any test that wants distinct ids.
+    """
     from loupe.store import JSONLStore
-    store = JSONLStore(root=home / "traces")
+
+    traces_dir = home / "traces"
+    traces_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.stem for p in traces_dir.glob("*.jsonl")}
+    store = JSONLStore(root=traces_dir)
 
     @trace(name="cli-test-agent", framework="test", store=store)
     def agent() -> None:
@@ -48,7 +59,10 @@ def _seed_one_trace(home: Path) -> str:
     with pytest.raises(RuntimeError):
         agent()
 
-    return next((home / "traces").glob("*.jsonl")).stem
+    after = {p.stem for p in traces_dir.glob("*.jsonl")}
+    new = after - before
+    assert len(new) == 1, f"expected exactly one new trace; got {len(new)}"
+    return next(iter(new))
 
 
 # ---------------------------------------------------------------------------
