@@ -35,8 +35,7 @@ jobs:
         run: python -m ruff check src/ tests/ examples/
 
       - name: type-check
-        run: python -m mypy --ignore-missing-imports src/loupe/trace.py src/loupe/store.py src/loupe/annotation.py src/loupe/bench.py
-        continue-on-error: true  # advisory until we tighten types
+        run: python -m mypy --ignore-missing-imports src/loupe/
 
       - name: test
         run: python -m pytest -q

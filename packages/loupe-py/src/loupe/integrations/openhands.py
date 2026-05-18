@@ -56,7 +56,7 @@ def patch() -> bool:
     changed = False
     step_fn = getattr(agent_cls, "step", None)
     if step_fn is not None and not getattr(step_fn, _PATCHED_FLAG, False):
-        agent_cls.step = _wrap(step_fn)  # type: ignore[method-assign]
+        agent_cls.step = _wrap(step_fn)  # type: ignore[attr-defined,method-assign]
         changed = True
     return changed
 

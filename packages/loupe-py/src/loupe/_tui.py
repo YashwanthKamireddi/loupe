@@ -104,7 +104,7 @@ def stack(*items: object) -> Group:
         if i > 0:
             parts.append(Text())
         parts.append(x)
-    return Group(*parts)
+    return Group(*parts)  # type: ignore[arg-type]  # Rich accepts any renderable
 
 
 def render_padded(*items: object) -> None:

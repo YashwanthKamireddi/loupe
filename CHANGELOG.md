@@ -8,6 +8,28 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.21] — 2026-05-18
+
+### Changed
+- **Mypy is now enforced on CI** — no more `continue-on-error: true`. The
+  whole `src/loupe/` tree passes `mypy --ignore-missing-imports` with zero
+  errors (29 source files). Type drift now fails the build.
+
+### Fixed
+- `cli.py` — `step_line` variable disambiguation in `loupe show` (was
+  shadowing the for-loop's `line: str` and confusing mypy).
+- `cli.py` — `annotations` command function renamed to `annotations_cmd`
+  to avoid shadowing `from __future__ import annotations`.
+- `_tui.py` — `Group(*parts)` typed-ignore added; Rich accepts any
+  renderable so the runtime is fine.
+- `integrations/openhands.py` — added `attr-defined` ignore for the
+  `agent_cls.step` assignment (we resolve `agent_cls` dynamically across
+  module paths so mypy can't see the attribute).
+
+### Tests
+- 179 Python + 35 TypeScript = **214 tests**, all green.
+- Type-check matrix now blocks merge on py3.11 / 3.12 / 3.13.
+
 ## [0.0.20] — 2026-05-18
 
 ### Added — CLI test coverage for the new commands

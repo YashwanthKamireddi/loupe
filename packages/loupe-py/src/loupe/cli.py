@@ -261,13 +261,13 @@ def show_trace(trace_id: str) -> None:
             "io": DIM,
             "custom": DIM,
         }.get(step["kind"], DIM)
-        line = Text()
-        line.append(f"  {i:>2}. ", style=DIM)
-        line.append(f"{step['kind']:>10}", style=kind_style)
-        line.append(f"  {step['name']}", style=INK)
+        step_line = Text()
+        step_line.append(f"  {i:>2}. ", style=DIM)
+        step_line.append(f"{step['kind']:>10}", style=kind_style)
+        step_line.append(f"  {step['name']}", style=INK)
         if step.get("error"):
-            line.append(f"\n        {step['error']}", style=RED)
-        console.print(line)
+            step_line.append(f"\n        {step['error']}", style=RED)
+        console.print(step_line)
     console.print()
 
 
@@ -377,7 +377,7 @@ def untag(trace_id: str, step_id: str) -> None:
 
 
 @app.command("annotations")
-def annotations(trace_id: str) -> None:
+def annotations_cmd(trace_id: str) -> None:
     """List annotations on one trace."""
     path = _find_trace(trace_id)
     if path is None:
