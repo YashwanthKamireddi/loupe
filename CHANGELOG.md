@@ -8,6 +8,33 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.23] — 2026-05-18
+
+### Changed — UX polish pass
+
+After a real walkthrough of every command, the visible CLI got tightened up.
+
+**`loupe list` is fully readable in an 80-col terminal again.**
+- Old design buried `name` and truncated everything to 6-character gibberish
+  (`resear…`, `framewo…`). New design: name first, trace_id shortened to
+  8 chars (still uniquely identifies hundreds of traces), framework full,
+  rest compact. Total fits in 80 columns with no truncation.
+- Tagged traces get a leading ◉ in the name column instead of a separate
+  `tags` column — saves the horizontal space.
+
+**`loupe doctor` stops wrapping `pip install` hints across two lines.**
+- All three columns in `status_table` are `no_wrap=True`. Values like
+  `pip install 'loupe[pydantic-ai]'` stay on one line.
+
+**Welcome screen + `loupe stats` lose phantom blank-line spacing.**
+- `stack()` no longer auto-inserts blank lines between items. Callers add
+  `Text()` explicitly where they want breathing room. This stops the
+  triple-blank-lines visual that happened when a stack contained another
+  stack (welcome screen, stats overview).
+
+### Tests
+- 182 Python + 35 TypeScript = **217 tests**. Lint + mypy strict + tsc all clean.
+
 ## [0.0.22] — 2026-05-18
 
 ### Added

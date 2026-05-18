@@ -73,7 +73,11 @@ def kv_table(rows: list[tuple[str, str]]) -> Table:
 
 
 def status_table(rows: list[tuple[str, str, str]]) -> Table:
-    """Three-column status grid (check / status / detail)."""
+    """Three-column status grid (check / status / detail).
+
+    All columns no-wrap so values like `pip install 'loupe[pydantic-ai]'`
+    stay on one line.
+    """
     table = Table(
         show_header=True,
         show_edge=False,
@@ -81,9 +85,9 @@ def status_table(rows: list[tuple[str, str, str]]) -> Table:
         box=SIMPLE,
         padding=(0, 2),
     )
-    table.add_column("check")
-    table.add_column("status")
-    table.add_column("detail", style=DIM)
+    table.add_column("check", no_wrap=True)
+    table.add_column("status", no_wrap=True)
+    table.add_column("detail", style=DIM, no_wrap=True)
     for check, status, detail in rows:
         table.add_row(check, status, detail)
     return table
@@ -98,13 +102,12 @@ def cmd(text: str) -> Text:
 
 
 def stack(*items: object) -> Group:
-    """Stack things with a blank line between."""
-    parts: list[object] = []
-    for i, x in enumerate(items):
-        if i > 0:
-            parts.append(Text())
-        parts.append(x)
-    return Group(*parts)  # type: ignore[arg-type]  # Rich accepts any renderable
+    """Stack items vertically without inserting blank lines between them.
+
+    Callers can pass an explicit `Text()` (blank line) item anywhere they
+    want vertical breathing room. That way nested stacks don't compound.
+    """
+    return Group(*items)  # type: ignore[arg-type]  # Rich accepts any renderable
 
 
 def render_padded(*items: object) -> None:

@@ -110,6 +110,7 @@ def _show_welcome() -> None:
 
     render_padded(
         banner(sub, version=__version__),
+        Text(),
         next_steps,
         Text(),
         section("Help"),
@@ -178,21 +179,26 @@ def list_traces() -> None:
     ann_store = AnnotationStore()
     from rich.box import SIMPLE
     from rich.table import Table
+
+    # Design: surface the *information dense* columns first (name, framework)
+    # and let the trace_id be short (8 chars is enough to disambiguate hundreds
+    # of traces). No column may silently collapse — every column has min_width.
     table = Table(
         show_header=True,
         header_style=f"dim {DIM}",
         box=SIMPLE,
-        padding=(0, 2),
+        padding=(0, 1),
         title=Text("traces", style=f"italic {AMBER}"),
         title_justify="left",
     )
-    table.add_column("trace_id", style=AMBER)
-    table.add_column("name", style=INK)
-    table.add_column("framework", style=DIM)
-    table.add_column("duration", justify="right", style=DIM)
-    table.add_column("steps", justify="right")
-    table.add_column("tags", justify="right")
-    table.add_column("status")
+    # Compact layout: tag indicator is folded into the name as a leading ◉
+    # to free up a column. Total width fits in 80 cols.
+    table.add_column("name", style=INK, no_wrap=False, min_width=22, ratio=3)
+    table.add_column("trace_id", style=AMBER, no_wrap=True, width=8)
+    table.add_column("framework", style=DIM, no_wrap=True, min_width=10, ratio=2)
+    table.add_column("duration", justify="right", style=DIM, no_wrap=True, width=8)
+    table.add_column("steps", justify="right", no_wrap=True, width=5)
+    table.add_column("status", no_wrap=True, width=6)
 
     for file in files[:100]:
         header = _read_header(file)
@@ -206,13 +212,17 @@ def list_traces() -> None:
         failed = header.get("metadata", {}).get("failed", False)
         status = Text("failed", style=RED) if failed else Text("ok", style=GREEN)
         ann_count = len(ann_store.load(header["trace_id"]))
+        # Prefix tagged traces with ◉ in the name column to save a column.
+        name_cell = Text()
+        if ann_count > 0:
+            name_cell.append("◉ ", style=AMBER)
+        name_cell.append(header["name"], style=INK)
         table.add_row(
-            header["trace_id"][:12],
-            header["name"],
+            name_cell,
+            header["trace_id"][:8],
             header.get("framework") or "—",
             duration,
             str(steps),
-            Text(str(ann_count), style=AMBER) if ann_count else Text("—", style=DIM),
             status,
         )
 
