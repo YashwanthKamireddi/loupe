@@ -6,6 +6,8 @@ Commands:
     loupe demo                        Seed three sample traces
     loupe init <name>                 Scaffold a starter agent project
     loupe providers                   List every LLM provider auto-detected
+    loupe stats                       Aggregate overview of captured state
+    loupe verify [--all]              Validate trace(s) against the canonical schema
     loupe ui [--port 7860]            Launch the local forensic dashboard
     loupe list                        List all captured traces
     loupe show <trace-id>             Print one trace step-by-step
@@ -42,6 +44,7 @@ from loupe._tui import (
     cmd,
     console,
     hint,
+    kv_table,
     render_padded,
     section,
     stack,
@@ -539,6 +542,99 @@ def doctor() -> None:
     render_padded(
         banner("install diagnostic", version=__version__),
         status_table(rows),
+    )
+
+
+@app.command("stats")
+def stats() -> None:
+    """Aggregate counts + breakdowns across every captured trace.
+
+    Quick overview: total traces, failures, total steps, total tags, breakdown
+    by framework, and the failure-category histogram from LoupeBench tags.
+    """
+    import json as _json
+    from collections import Counter
+
+    traces_dir = _default_dir() / "traces"
+    ann_store = AnnotationStore()
+    files = sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []
+    if not files:
+        render_padded(banner(version=__version__), _no_traces_hint())
+        return
+
+    framework_counter: Counter[str] = Counter()
+    failure_count = 0
+    step_count = 0
+    durations_ms: list[float] = []
+
+    for path in files:
+        try:
+            with path.open() as f:
+                first = _json.loads(next(f))
+        except (StopIteration, _json.JSONDecodeError):
+            continue
+        if first.get("_type") != "trace":
+            continue
+        framework_counter[first.get("framework") or "(none)"] += 1
+        if first.get("metadata", {}).get("failed"):
+            failure_count += 1
+        step_count += max(0, sum(1 for _ in path.open()) - 1)
+        if first.get("ended_at") and first.get("started_at"):
+            durations_ms.append((first["ended_at"] - first["started_at"]) * 1000)
+
+    # Annotation category histogram
+    cat_counter: Counter[str] = Counter()
+    annotation_total = 0
+    for trace_id, items in ann_store.all().items():
+        del trace_id  # not needed
+        annotation_total += len(items)
+        for ann in items:
+            cat_counter[ann.failure_category] += 1
+
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    summary = kv_table([
+        ("traces", str(len(files))),
+        ("failed", f"{failure_count}  ({failure_count / len(files):.0%})"),
+        ("steps", str(step_count)),
+        ("tagged", str(annotation_total)),
+        (
+            "median dur",
+            f"{sorted(durations_ms)[len(durations_ms) // 2]:.0f} ms" if durations_ms else "—",
+        ),
+    ])
+
+    framework_table = Table(
+        show_header=False, show_edge=False, box=SIMPLE, padding=(0, 2),
+        title=Text("by framework", style=f"italic {AMBER}"),
+        title_justify="left",
+    )
+    framework_table.add_column("name", style=INK)
+    framework_table.add_column("count", justify="right", style=DIM)
+    for fw, n in framework_counter.most_common():
+        framework_table.add_row(fw, str(n))
+
+    category_table = Table(
+        show_header=False, show_edge=False, box=SIMPLE, padding=(0, 2),
+        title=Text("failure categories", style=f"italic {AMBER}"),
+        title_justify="left",
+    )
+    category_table.add_column("category", style=INK)
+    category_table.add_column("count", justify="right", style=DIM)
+    if cat_counter:
+        for cat, n in cat_counter.most_common():
+            category_table.add_row(cat, str(n))
+    else:
+        category_table.add_row("(none yet)", "—")
+
+    render_padded(
+        banner("captured-state overview", version=__version__),
+        summary,
+        Text(),
+        framework_table,
+        Text(),
+        category_table,
     )
 
 
