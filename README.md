@@ -266,7 +266,7 @@ Both Python and TS write the **same JSONL** to `~/.loupe/traces/` — and the HT
 | **Real SAE circuit attribution** | `loupe attribute --backend sae` — GPT-2 small + sae-lens forward pass | ✅ v0.0.41 |
 | **Neuronpedia explanations** | `--explain` turns feature ids into readable concepts | ✅ v0.0.42 |
 | **`loupe cluster`** | Find SAE features that recur across tagged failures | ✅ v0.0.40 |
-| Loupe Cloud (hosted) | Share traces with your team, dashboards online | 🚧 v0.3 |
+| Loupe Cloud (hosted dashboard sync) | Out of scope for v0.x — Loupe's pitch is local-first traces. |
 
 ## Two languages, one dashboard
 

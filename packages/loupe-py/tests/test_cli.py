@@ -25,6 +25,7 @@ def loupe_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "loupe-home"
     home.mkdir()
     monkeypatch.setenv("LOUPE_HOME", str(home))
+    monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
     # Force a wide terminal so Rich doesn't truncate trace names in tables.
     monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.setenv("FORCE_COLOR", "0")
@@ -638,24 +639,62 @@ def test_replay_cli_unknown_framework_errors_clean(
     runner: CliRunner, loupe_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A trace from a non-Gemini framework today gets a clear error
-    instead of a Python traceback."""
-    monkeypatch.setenv("GEMINI_API_KEY", "dummy")    # avoid the key-check branch
+    """An unrecognized framework gets a clean error instead of a traceback."""
     p = loupe_home / "traces" / "alpha111111111.jsonl"
     _write_jsonl(p, [
         {"_type": "trace", "trace_id": "alpha111111111", "name": "x",
-         "framework": "langgraph", "started_at": 1.0, "ended_at": 2.0},
+         "framework": "some-bespoke-framework", "started_at": 1.0, "ended_at": 2.0},
         {"_type": "step", "step_id": "s1", "kind": "plan",
          "name": "plan", "started_at": 1.0, "ended_at": 1.1,
          "outputs": {"q": "hello"}},
         {"_type": "step", "step_id": "s2", "kind": "llm-call",
-         "name": "anthropic:claude-haiku", "started_at": 1.1, "ended_at": 1.9,
-         "inputs": {"model": "claude-haiku"}, "outputs": {"text": "hi"}},
+         "name": "fake:fake-model", "started_at": 1.1, "ended_at": 1.9,
+         "inputs": {"model": "fake-model"}, "outputs": {"text": "hi"}},
     ])
     res = runner.invoke(app, ["replay", "alpha1111"])
     assert res.exit_code == 1
-    assert "not implemented yet" in res.output
+    assert "does not recognize framework" in res.output
     assert "Traceback" not in res.output
+
+
+def test_replay_cli_missing_api_key_errors_clean(
+    runner: CliRunner, loupe_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anthropic replay without ANTHROPIC_API_KEY errors cleanly."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    p = loupe_home / "traces" / "ant1111111111.jsonl"
+    _write_jsonl(p, [
+        {"_type": "trace", "trace_id": "ant1111111111", "name": "x",
+         "framework": "anthropic", "started_at": 1.0, "ended_at": 2.0},
+        {"_type": "step", "step_id": "s1", "kind": "plan",
+         "name": "plan", "started_at": 1.0, "ended_at": 1.1,
+         "outputs": {"q": "hello"}},
+        {"_type": "step", "step_id": "s2", "kind": "llm-call",
+         "name": "anthropic:claude-haiku-4-5", "started_at": 1.1,
+         "ended_at": 1.9,
+         "inputs": {"model": "claude-haiku-4-5"}, "outputs": {"text": "hi"}},
+    ])
+    res = runner.invoke(app, ["replay", "ant11111"])
+    assert res.exit_code == 1
+    assert "ANTHROPIC_API_KEY" in res.output
+    assert "Traceback" not in res.output
+
+
+def test_replay_resolves_anthropic_and_openai_backends(
+    loupe_home: Path,
+) -> None:
+    """Backend resolver wires the three supported frameworks."""
+    from loupe.cli import _resolve_replay_backend
+
+    assert _resolve_replay_backend("gemini",    "p", "m", "src") is not None
+    assert _resolve_replay_backend("google",    "p", "m", "src") is not None
+    assert _resolve_replay_backend("anthropic", "p", "m", "src") is not None
+    assert _resolve_replay_backend("openai",    "p", "m", "src") is not None
+    # And aliases are case-insensitive.
+    assert _resolve_replay_backend("ANTHROPIC", "p", "m", "src") is not None
+    # Unknown framework returns None — caller decides what to do.
+    assert _resolve_replay_backend("langgraph", "p", "m", "src") is None
 
 
 def test_parse_duration_rejects_garbage() -> None:

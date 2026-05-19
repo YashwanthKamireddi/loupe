@@ -19,6 +19,7 @@ def loupe_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "loupe-home"
     home.mkdir()
     monkeypatch.setenv("LOUPE_HOME", str(home))
+    monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
     monkeypatch.setenv("COLUMNS", "200")
     from loupe import store as store_mod
 

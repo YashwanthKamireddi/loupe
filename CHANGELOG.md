@@ -7,6 +7,87 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.45] — 2026-05-19  ·  Production hardening — every command, every state
+
+End-to-end shakedown of every CLI command against fresh and populated
+LOUPE_HOMEs. One critical bug surfaced, plus a round of polish.
+
+### Fixed — background indexer was polluting users' real ``~/.loupe``
+
+**Severity: high.** Shipped briefly; cleaned up in this release.
+
+`JSONLStore.save()` dispatched a daemon thread that called
+``default_index()``, which reads ``LOUPE_HOME`` at thread-run time. If
+a test fixture's ``monkeypatch.setenv("LOUPE_HOME")`` got torn down
+between scheduling and execution, the thread saw the live env and
+wrote rows to the **user's real index file**. Symptom on the affected
+user's machine: ``loupe list`` and ``loupe stats`` displayed rows
+from long-deleted test traces, rendered as garbled unicode.
+
+**Architectural fix:** the index path is now derived from the store's
+own ``self.root`` and captured **eagerly** before the thread spawns.
+``LOUPE_HOME`` is no longer read inside the background thread. Even a
+swapped env mid-flight can't redirect the write anymore.
+
+**Defensive fix:** every test fixture that sets ``LOUPE_HOME`` also
+sets ``LOUPE_DISABLE_INDEX=1`` — so even if some future regression
+re-opens the door, no test can pollute a user home.
+
+**Recovery for anyone hit:** ``loupe index rebuild`` re-walks the
+JSONL files on disk and replaces the polluted DB. The on-disk JSONL
+files were never affected; they're the source of truth.
+
+### Eliminated all "coming soon" / half-built language
+
+The replay docstring used to say "Anthropic + OpenAI replay are coming
+once we've validated edge cases." They're shipped now — see below.
+Pre-alpha 🚧 badges and roadmap-style placeholders are gone from the
+sub-package READMEs and the main README; what's in the box is what
+works today.
+
+### Added — Anthropic + OpenAI replay backends
+
+``loupe replay`` now supports all three providers:
+
+```
+loupe replay <trace>                       # any framework auto-routed
+loupe replay <trace> --model gpt-4o-mini   # cross-model replay
+loupe replay <trace> --prompt "…"          # prompt variants
+```
+
+Each backend is a small subclass of ``_ReplayRunner`` exposing
+``framework``, ``env_keys``, ``key_hint``, and ``invoke()``. Adding
+a new provider is one class + one entry in ``_REPLAY_BACKENDS``.
+
+### Polish
+
+- ``loupe.neuronpedia.explain_many`` renamed an internal ``todo``
+  variable to ``pending`` for readability.
+- ``loupe.__init__`` now surfaces the attribution primitives
+  (``MockAttributor``, ``SAEAttributor``, ``Attributor``,
+  ``AttributionResult``, ``FeatureActivation``, ``make_attributor``,
+  ``attribute_trace``) so user code can ``from loupe import …``.
+- ``@loupe/sdk`` ``VERSION`` constant in ``src/index.ts`` synced to
+  ``package.json`` (0.0.19) with a comment marking the sync point.
+- ``packages/loupe-py/README.md`` and ``packages/loupe-ts/README.md``
+  reworked to reflect today's install paths and the v0.2 commands.
+- ``CONTRIBUTING.md`` written (the README linked it; no longer 404).
+- ``docs/ARCHITECTURE.md`` extended with index, attribution,
+  Neuronpedia, cluster, replay subsystems.
+
+### Tests
+
+- 1 new regression test
+  (``test_background_indexer_targets_store_root_not_env``) that
+  patches ``JSONLIndex.__init__`` to capture the db_path the
+  background thread tries to use, then asserts it's derived from
+  the **store's** root, not LOUPE_HOME.
+- 2 new replay CLI tests for the new Anthropic + OpenAI backends:
+  missing-API-key error path + backend resolver.
+- 9 test fixtures hardened with ``LOUPE_DISABLE_INDEX=1`` so test
+  runs can never leak into a user's real index.
+- **278 Python + 37 TypeScript = 315 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.44] — 2026-05-19  ·  `loupe replay` — re-run any captured agent run
 
 The agent-forensics use case asked: *"Did the bug get fixed?"*

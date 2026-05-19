@@ -243,15 +243,15 @@ def explain_many(
         return {fid: None for fid in feature_ids}
 
     out: dict[int, str | None] = {}
-    todo: list[int] = []
+    pending: list[int] = []
     for fid in feature_ids:
         found, value = c.get(f"{model_id}/{layer}/{fid}")
         if found:
             out[fid] = value
         else:
-            todo.append(fid)
+            pending.append(fid)
 
-    if todo:
+    if pending:
         # Bounded concurrency: a 16-feature attribution should finish
         # in ~1-2s on a warm network, never block the CLI.
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -262,7 +262,7 @@ def explain_many(
                     layer=layer,
                     feature_id=fid,
                 ): fid
-                for fid in todo
+                for fid in pending
             }
             for fut in futures:
                 fid = futures[fut]

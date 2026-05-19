@@ -56,19 +56,34 @@ class JSONLStore:
         # file on disk is the source of truth — if the index call fails, the
         # next `loupe index rebuild` catches up.
         #
+        # CRITICAL: we pass the store's actual root explicitly. The background
+        # thread can outlive a test fixture's `monkeypatch.setenv("LOUPE_HOME")`,
+        # and if we relied on the live env var the thread could write to the
+        # user's real ~/.loupe/index.duckdb. That bug shipped briefly and
+        # corrupted real users' indexes — never again.
+        #
         # Set LOUPE_DISABLE_INDEX=1 to opt out entirely (e.g., NFS mounts).
         if not os.environ.get("LOUPE_DISABLE_INDEX"):
-            _schedule_index_upsert(path)
+            _schedule_index_upsert(path, traces_root=self.root)
 
 
-def _schedule_index_upsert(path: Path) -> None:
-    """Fire-and-forget background upsert. Never raises."""
+def _schedule_index_upsert(path: Path, *, traces_root: Path) -> None:
+    """Fire-and-forget background upsert. Never raises.
+
+    `traces_root` is the directory whose sibling `index.duckdb` we will
+    write to. Captured explicitly so an env-var change between scheduling
+    and execution can't redirect the write to a different home.
+    """
     import threading
+
+    # Compute the target index path EAGERLY, before spawning the thread,
+    # while the caller's environment is still in scope.
+    index_path = traces_root.parent / "index.duckdb"
 
     def _run() -> None:
         try:
-            from loupe.index import upsert_trace_file
-            upsert_trace_file(path)
+            from loupe.index import JSONLIndex
+            JSONLIndex(db_path=index_path, traces_dir=traces_root).upsert_file(path)
         except Exception:  # noqa: BLE001 — best-effort, swallow silently
             pass
 

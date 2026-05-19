@@ -3,7 +3,8 @@
 A magnifying glass for your AI agent. **TypeScript counterpart of the [Python `loupe`](../loupe-py) package** — same wire format, same `~/.loupe/traces/` directory, same `loupe ui` dashboard.
 
 ```bash
-npm install @loupe/sdk          # not yet published; use file: until v0.1
+# from this repo (canonical install today):
+cd packages/loupe-ts && npm install && npm run build
 ```
 
 ## Quickstart
@@ -54,10 +55,6 @@ const model = wrapLanguageModel({
   middleware: loupeMiddleware(),
 });
 ```
-
-## Status
-
-🚧 Pre-alpha. First public release targeted **June 2026**.
 
 ## Dev setup
 

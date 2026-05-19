@@ -22,14 +22,25 @@ Every other piece of Loupe is in service of that file: write it, read it, valida
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  WIRE FORMAT (the contract)                                              │
 │   ~/.loupe/traces/{trace_id}.jsonl     — immutable once written          │
-│   ~/.loupe/annotations/{trace_id}.json — sidecar, atomic + locked         │
+│   ~/.loupe/annotations/{trace_id}.json — sidecar, atomic + locked        │
+│   ~/.loupe/index.duckdb                — derived view, auto-rebuilt      │
+│   ~/.loupe/neuronpedia-cache.json      — feature explanation cache       │
 │   docs/loupe-trace.schema.json         — Draft-2020-12, public contract  │
 └──────────────┬──────────────────────────────────────────────────────────┘
                │ read
                ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
+│  ANALYSIS (the v0.2 research layer)                                      │
+│   loupe.attribution      — SAE forward pass + top-K feature extraction   │
+│   loupe.neuronpedia      — human-readable feature interpretations        │
+│   loupe cluster          — distinctiveness analysis across failures      │
+│   loupe replay           — re-invoke captured prompts on the same model  │
+└──────────────┬──────────────────────────────────────────────────────────┘
+               │ surfaces in
+               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
 │  PRESENTATION                                                            │
-│   loupe ui   — local FastAPI dashboard, SSE-live, forensic palette       │
+│   loupe ui   — local FastAPI dashboard, SSE-live, attribution panel      │
 │   loupe report (markdown + standalone HTML) — shareable case files       │
 │   loupe show / list / stats / diff / verify — terminal-side inspection   │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -103,6 +114,86 @@ Tested under real multi-process contention: 30 processes adding annotations to t
 
 ---
 
+## DuckDB index (`loupe.index`)
+
+Every `loupe list / stats / verify --all` historically re-read every JSONL header from disk. Fine for a handful of traces; quadratic-feeling at 10k+. The embedded index keeps those queries flat.
+
+- **Source of truth: still the JSONL files.** The index is a derived view. `loupe index rebuild` re-walks the directory and re-populates from scratch at any time.
+- **Background-thread upsert.** `JSONLStore.save()` writes the JSONL, then fires a daemon thread that opens DuckDB, upserts the header + step rows, and exits. The hot path stays under 100µs/step (perf budget enforced by `test_performance.py`).
+- **Schema-versioned.** A `meta` row stores `schema_version`. On version drift the index transparently rebuilds itself. No manual migrations.
+- **In-process write lock.** Concurrent writers in the same Python process serialize through `_write_lock` (a `threading.Lock`). DuckDB rejects cross-process concurrent writers; that surfaces as a swallowed `IOError` and the operation is a no-op until the other holder releases.
+- **`LOUPE_DISABLE_INDEX=1`** opts out entirely (NFS without locking, sandboxed CI, etc.). The disk fallback in `loupe list / stats` still works.
+
+---
+
+## Circuit attribution (`loupe.attribution`)
+
+The v0.2 research artifact. Tagging a step as "hallucination" tells you *what* went wrong; SAE attribution tells you *why* at the level of mechanism.
+
+```
+prompt + response  →  tokenize  →  forward pass with hook  →
+hidden states[seq, d_in]  →  SAE.encode  →
+feature activations[seq, d_sae]  →  sum across seq  →  top-K
+```
+
+The `Attributor` Protocol has one method (`.attribute(prompt, response, step_id, trace_id) -> AttributionResult`). Two implementations ship:
+
+| Backend | Model + SAE | Use case |
+|---|---|---|
+| `MockAttributor` | none — SHA-derived deterministic features | CI, plumbing validation, no extra deps |
+| `SAEAttributor` | gpt2-small + `gpt2-small-res-jb/blocks.6.hook_resid_pre` (defaults), any TransformerLens model + sae-lens SAE | real research |
+
+`SAEAttributor` is **lazy**: the constructor doesn't load weights. The first `.attribute()` call downloads + caches the model + SAE on the instance, so 100 subsequent calls share the same load. CPU works (~7s first call, ~200ms after); GPU optional. Bounded by `max_tokens=256` so long traces don't OOM.
+
+Results land in `Annotation.circuit_attribution` (free-form JSON), which the dashboard renders inline below the LoupeBench tag card.
+
+---
+
+## Neuronpedia (`loupe.neuronpedia`)
+
+Without explanations, `feature #23123 fired` is useful for clustering and meaningless for human review. With them, the same line reads `#23123 — phrases related to legal documents and rulings`.
+
+- `explain(feature_id, hook_name, release)` — single feature lookup against `https://www.neuronpedia.org/api/feature/{model}/{layer}/{feature}`.
+- `explain_many([ids], ...)` — bounded `ThreadPoolExecutor` (max 8 workers). 16 features in ~1-2s.
+- **Local cache** at `~/.loupe/neuronpedia-cache.json` (atomic-rename writes; concurrent additions serialize through an in-process `threading.Lock`). Second `--explain` run is instant + offline.
+- **Best-effort.** Network down → `None`, never raises. `LOUPE_DISABLE_NEURONPEDIA=1` skips the layer entirely.
+
+Recognized SAE releases today: `gpt2-small-res-jb` and `gpt2-small-res-jb-feature-splitting`. Other releases return `None` from the lookup and the CLI falls back to the bare hook-layer label.
+
+---
+
+## Cluster analysis (`loupe cluster`)
+
+The analytical primitive of the LoupeBench research workflow. Given the annotation store, find features that recur across many failures of one category — and which are over-represented in that category vs every other.
+
+```
+loupe cluster --category hallucination --top-k 25
+```
+
+Output:
+
+- **Frequency table.** Per-feature `hits` + `share` across the filtered annotation set.
+- **Distinctiveness table.** When `--category` is set, a smoothed log-ratio score per feature: `log((in_hits+1)/(in_total+1) / ((out_hits+1)/(out_total+1)))`. The `+1` smoothing handles the "feature appears in zero out-of-category annotations" case without `log(0)` blowups.
+
+This is what a publishable cross-failure circuit characterization looks like in practice.
+
+---
+
+## Replay (`loupe replay`)
+
+Re-invoke a captured agent run with the same prompt + model — or override either to test reproducibility, model upgrades, prompt variants. The new run is captured as a separate trace; the CLI suggests `loupe diff <old> <new>` to compare.
+
+Prompt + model extraction is a layered fallback chain so it survives different capture pathways:
+
+1. `plan` step's `outputs.q` (the `loupe init` scaffold pattern)
+2. `llm-call` step's `inputs.contents` (Gemini-style)
+3. `llm-call` step's `inputs.messages` joined as text (OpenAI/Anthropic-style)
+4. Model is `inputs.model`, or parsed out of the step `name` (`gemini:gemini-2.5-flash`) when universal-httpx captured a body that lacked the field (Gemini's case — its model lives in the URL).
+
+Today's replay backends: `gemini`. Anthropic + OpenAI land in subsequent releases as their per-provider input-extraction edge cases are validated.
+
+---
+
 ## Dashboard (loupe ui)
 
 FastAPI + a single-page static SPA in `loupe/ui/static/`. The interesting bits:
@@ -129,6 +220,9 @@ The frontend has no framework — vanilla JS + CSS. Three reasons: instant load,
 | `test_performance.py` | hot path budget (< 100µs/step, < 5ms/trace) |
 | `test_cli.py` | every public CLI command via CliRunner |
 | `test_<integration>.py` | each framework integration |
+| `test_index.py` | DuckDB index correctness + concurrency + rebuild + fallback |
+| `test_attribution.py` | mock + real SAE pipeline + cluster + dashboard markup |
+| `test_neuronpedia.py` | explanation client + cache + HTTP error paths |
 
 CI runs all of them on Python 3.11 / 3.12 / 3.13 and Node 20 / 22 / 24. Mypy strict. Ruff strict.
 

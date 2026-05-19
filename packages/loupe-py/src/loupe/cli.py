@@ -1730,12 +1730,11 @@ def replay(
     The result is captured as a NEW Loupe trace. The CLI prints both
     trace ids so you can run ``loupe diff <old> <new>`` immediately.
 
-    Supported providers today: ``gemini`` (free tier, default for the
-    ``loupe init`` scaffold). Anthropic + OpenAI replay are coming once
-    we've validated the per-provider input-extraction edge cases.
+    Supported providers: ``gemini`` / ``google``, ``anthropic``,
+    ``openai``. The framework field on the original trace selects which
+    SDK to invoke; the required API key for that provider must be in
+    the current shell.
     """
-    import os
-
     from loupe import record_step
     from loupe import trace as trace_decorator
     from loupe.integrations import patch_all
@@ -1767,52 +1766,47 @@ def replay(
         console.print(Text("  Pass --model to override.", style=DIM))
         raise typer.Exit(code=1)
 
-    # Provider routing — extend as we add more replay backends.
-    if framework not in ("gemini", "google"):
+    # Select the replay backend by framework name. Each backend is a
+    # closure: () -> str. Centralizing keeps the trace+spinner code
+    # below uniform across providers.
+    runner = _resolve_replay_backend(framework, final_prompt, final_model, path.stem)
+    if runner is None:
         console.print(
             Text(
-                f"  ✗ replay backend for framework {framework!r} not implemented yet. "
-                "Today: gemini. PRs welcome.",
+                f"  ✗ replay does not recognize framework {framework!r}. "
+                "Supported: gemini, google, anthropic, openai.",
                 style=RED,
             )
         )
-        raise typer.Exit(code=1)
-
-    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
         console.print(
-            Text("  ✗ GEMINI_API_KEY is not set in this shell.", style=RED)
-        )
-        console.print(
-            Text("  Get a free key at https://aistudio.google.com/apikey",
+            Text("  Pass --model + ensure the trace's framework field is set.",
                  style=DIM)
         )
+        raise typer.Exit(code=1)
+
+    missing_env = runner.missing_env()
+    if missing_env:
+        console.print(
+            Text(f"  ✗ {missing_env} is not set in this shell.", style=RED)
+        )
+        console.print(Text(f"  {runner.key_hint}", style=DIM))
         raise typer.Exit(code=1)
 
     patch_all()
     original_name = header.get("name", "agent")
 
-    @trace_decorator(name=f"replay-of-{original_name}", framework="gemini")
+    @trace_decorator(name=f"replay-of-{original_name}", framework=runner.framework)
     def _replay_turn() -> str:
-        from google import genai
-
         record_step(
             "plan", "replay prompt",
             outputs={
                 "q": final_prompt[:200],
                 "source_trace": path.stem,
                 "model": final_model,
+                "provider": runner.framework,
             },
         )
-        client = genai.Client()
-        response = client.models.generate_content(
-            model=final_model, contents=final_prompt,
-        )
-        text = response.text or "(no text)"
-        usage = getattr(response, "usage_metadata", None)
-        tokens: dict[str, Any] = {}
-        if usage is not None:
-            tokens["input"] = getattr(usage, "prompt_token_count", None)
-            tokens["output"] = getattr(usage, "candidates_token_count", None)
+        text, tokens = runner.invoke()
         record_step(
             "final", "got reply",
             outputs={"text": text[:300], **tokens},
@@ -1869,6 +1863,146 @@ def replay(
         hint(f"loupe show {new_id[:12]}                    # inspect the replay")
     )
     console.print()
+
+
+# ----------------------------------------------------------------------------
+# Replay backends — one per provider.
+#
+# Each backend is constructed with (prompt, model, source_trace_id) and
+# exposes:
+#   .framework  — canonical string written to the new trace
+#   .key_hint   — user-facing one-line hint for setting the env var
+#   .missing_env() — returns "GEMINI_API_KEY" / "ANTHROPIC_API_KEY" / ""
+#                   so the CLI can fail before touching the SDK
+#   .invoke()    — performs the actual API call. Returns (text, tokens-dict).
+#                  May raise any provider SDK exception; the caller catches
+#                  and prints a clean error.
+#
+# Adding a new provider = one class + one entry in _REPLAY_BACKENDS below.
+# ----------------------------------------------------------------------------
+
+
+class _ReplayRunner:
+    """Base class for per-provider replay backends.
+
+    Each subclass implements ``invoke()`` to call the real SDK and return
+    ``(text, tokens-dict)``. The base class handles the env-key check
+    uniformly so the CLI can fail before any SDK touches the network.
+    """
+
+    framework: str
+    key_hint: str
+    env_keys: tuple[str, ...]
+
+    def __init__(self, prompt: str, model: str) -> None:
+        self.prompt = prompt
+        self.model = model
+
+    def missing_env(self) -> str:
+        """Return the canonical env var name when NONE of the accepted
+        vars are set; otherwise empty string."""
+        if any(os.environ.get(k) for k in self.env_keys):
+            return ""
+        return self.env_keys[0]
+
+    def invoke(self) -> tuple[str, dict[str, Any]]:  # pragma: no cover — abstract
+        raise NotImplementedError
+
+
+class _GeminiReplay(_ReplayRunner):
+    framework = "gemini"
+    key_hint = "Get a free key at https://aistudio.google.com/apikey"
+    env_keys = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+    def invoke(self) -> tuple[str, dict[str, Any]]:
+        from google import genai
+        client = genai.Client()
+        response = client.models.generate_content(
+            model=self.model, contents=self.prompt,
+        )
+        text = response.text or "(no text)"
+        usage = getattr(response, "usage_metadata", None)
+        tokens: dict[str, Any] = {}
+        if usage is not None:
+            tokens["input"] = getattr(usage, "prompt_token_count", None)
+            tokens["output"] = getattr(usage, "candidates_token_count", None)
+        return text, tokens
+
+
+class _AnthropicReplay(_ReplayRunner):
+    framework = "anthropic"
+    key_hint = "Set ANTHROPIC_API_KEY in your shell (sk-ant-…)."
+    env_keys = ("ANTHROPIC_API_KEY",)
+
+    def invoke(self) -> tuple[str, dict[str, Any]]:
+        import anthropic
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=self.model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": self.prompt}],
+        )
+        # Concatenate every text block — multimodal responses may include
+        # non-text content (tool_use, etc.); we extract just the prose.
+        text = "".join(
+            getattr(b, "text", "") for b in (response.content or [])
+            if getattr(b, "type", None) == "text"
+        ) or "(no text)"
+        tokens: dict[str, Any] = {
+            "input": getattr(response.usage, "input_tokens", None),
+            "output": getattr(response.usage, "output_tokens", None),
+        }
+        return text, tokens
+
+
+class _OpenAIReplay(_ReplayRunner):
+    framework = "openai"
+    key_hint = "Set OPENAI_API_KEY in your shell (sk-…)."
+    env_keys = ("OPENAI_API_KEY",)
+
+    def invoke(self) -> tuple[str, dict[str, Any]]:
+        from openai import OpenAI
+        client = OpenAI()
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": self.prompt}],
+        )
+        text = response.choices[0].message.content or "(no text)"
+        usage = response.usage
+        tokens: dict[str, Any] = {
+            "input": getattr(usage, "prompt_tokens", None),
+            "output": getattr(usage, "completion_tokens", None),
+        } if usage else {}
+        return text, tokens
+
+
+# Framework string (as captured in the trace) → backend class. Aliases
+# accepted (e.g. both "gemini" and "google" map to the Gemini backend
+# because universal-httpx labels Google APIs differently in different
+# capture paths).
+_REPLAY_BACKENDS: dict[str, type[_ReplayRunner]] = {
+    "gemini":    _GeminiReplay,
+    "google":    _GeminiReplay,
+    "anthropic": _AnthropicReplay,
+    "openai":    _OpenAIReplay,
+}
+
+
+def _resolve_replay_backend(
+    framework: str, prompt: str, model: str, source: str,
+) -> _ReplayRunner | None:
+    """Pick a replay backend by framework name.
+
+    ``source`` is the original trace_id; currently unused by the backends
+    but reserved for future telemetry (e.g. recording which trace seeded
+    a replay attempt so cluster analysis can track lineage).
+    """
+    del source   # reserved
+    cls = _REPLAY_BACKENDS.get(framework.lower())
+    if cls is None:
+        return None
+    return cls(prompt, model)
 
 
 def _extract_replay_inputs(
