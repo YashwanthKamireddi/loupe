@@ -20,6 +20,7 @@
 import { redact } from "../_redact.js";
 import { closeStep, currentTrace, openStep } from "../trace.js";
 import type { Step } from "../types.js";
+import { withSuppressedHttpCapture } from "./index.js";
 
 // Vercel AI SDK's actual LanguageModelV2 type lives in the optional `ai` peer
 // dependency. We accept anything shaped like it — methods take any params and
@@ -48,7 +49,9 @@ export function wrapModel<M extends AnyModel>(model: M): M {
         return async function loupeDoGenerate(this: unknown, ...args: unknown[]) {
           const step = _openLlmStep(target, args[0]);
           try {
-            const result = await value.apply(target, args);
+            // Suppress universal fetch capture while the SDK runs — otherwise
+            // patchFetch would emit a second Step for the same call.
+            const result = await withSuppressedHttpCapture(() => value.apply(target, args));
             if (step) _closeWithResult(step, result);
             return result;
           } catch (err) {
@@ -62,7 +65,7 @@ export function wrapModel<M extends AnyModel>(model: M): M {
         return async function loupeDoStream(this: unknown, ...args: unknown[]) {
           const step = _openLlmStep(target, args[0], { streaming: true });
           try {
-            const result = await value.apply(target, args);
+            const result = await withSuppressedHttpCapture(() => value.apply(target, args));
             // Streams are captured at "started" time; full output aggregation
             // can be layered on later by inspecting the returned stream.
             if (step) closeStep(step, { outputs: { stream: "started" } });

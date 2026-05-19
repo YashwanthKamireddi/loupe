@@ -8,6 +8,29 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.34] — 2026-05-19  &nbsp; · &nbsp; `@loupe/sdk` 0.0.19
+
+### TypeScript SDK — dedup parity with Python
+
+v0.0.31 fixed the double-capture bug in the Python SDK
+(direct-SDK integration + universal-httpx both emitting for the same
+call). The TypeScript side had the exact same shape — `wrapModel`
+captures at the Vercel AI SDK level and `patchFetch` captures at the
+fetch level, so a user calling `patchAll()` would have gotten two
+Steps per logical call.
+
+- Added `withSuppressedHttpCapture(fn)` + `isDirectCaptureActive()` in
+  `@loupe/sdk/integrations`. Async-safe via `AsyncLocalStorage` —
+  parallel tasks each see their own state.
+- `wrapModel`'s `doGenerate` and `doStream` now wrap the SDK call in
+  `withSuppressedHttpCapture(...)`.
+- `patchFetch` / `wrapFetch` short-circuit when the flag is set.
+
+### Tests
+- 2 new TypeScript tests pin the suppression contract: one with the
+  guard on (no Step emitted), one without (Step emitted as before).
+- **212 Python + 37 TypeScript = 249 tests.** All clean.
+
 ## [0.0.33] — 2026-05-19
 
 ### Backend hardening — production-grade UI server

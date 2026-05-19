@@ -8,12 +8,40 @@
  * @example
  *   import { patchAll } from "@loupe/sdk/integrations";
  *   const report = await patchAll();   // { "universal-fetch": true }
+ *
+ * Double-capture avoidance
+ * ------------------------
+ * Direct SDK integrations (currently `wrapModel` for Vercel AI SDK) and
+ * `patchFetch` both see the same network call when active together. To
+ * avoid emitting two Steps per logical call, direct integrations call
+ * `withSuppressedHttpCapture(fn)` around the wrapped call; `patchFetch`
+ * reads the flag and skips. Implemented with AsyncLocalStorage so async
+ * tasks each see their own state.
  */
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { patchFetch } from "./universal.js";
 
 export { patchFetch, wrapFetch } from "./universal.js";
 export { loupeMiddleware, wrapModel } from "./ai-sdk.js";
+
+const _captureStorage = new AsyncLocalStorage<{ direct: boolean }>();
+
+/** Read the current direct-capture flag. */
+export function isDirectCaptureActive(): boolean {
+  return _captureStorage.getStore()?.direct === true;
+}
+
+/**
+ * Run `fn` with the direct-capture flag set so `patchFetch` skips
+ * emitting a Step (the SDK-level integration is already capturing).
+ *
+ * Returns whatever `fn` returns. Safe to nest.
+ */
+export function withSuppressedHttpCapture<T>(fn: () => T): T {
+  return _captureStorage.run({ direct: true }, fn);
+}
 
 /**
  * Turn on every integration whose dependency is installed. Idempotent.

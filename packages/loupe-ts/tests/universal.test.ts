@@ -131,3 +131,36 @@ describe("patchFetch — global fetch", () => {
     expect(patchFetch(fake)).toBe(false);
   });
 });
+
+describe("withSuppressedHttpCapture — dedup with direct SDK integrations", () => {
+  it("skips Step emission while the flag is active", async () => {
+    const { withSuppressedHttpCapture } = await import("../src/integrations/index.js");
+    const wrapped = wrapFetch(makeFakeFetch({ content: [{ text: "hi" }] }));
+    const run = trace({ framework: "universal", store }, async () => {
+      // Mimic what wrapModel does: claim the http layer while the wrapped
+      // SDK runs so universal-fetch doesn't double-record.
+      await withSuppressedHttpCapture(() =>
+        wrapped("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          body: JSON.stringify({ model: "claude", messages: [] }),
+        }),
+      );
+    });
+    await run();
+    const steps = await readSteps();
+    expect(steps).toHaveLength(0);
+  });
+
+  it("captures normally when the flag is NOT active", async () => {
+    const wrapped = wrapFetch(makeFakeFetch({ content: [{ text: "hi" }] }));
+    const run = trace({ framework: "universal", store }, async () => {
+      await wrapped("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        body: JSON.stringify({ model: "claude", messages: [] }),
+      });
+    });
+    await run();
+    const steps = await readSteps();
+    expect(steps).toHaveLength(1);
+  });
+});

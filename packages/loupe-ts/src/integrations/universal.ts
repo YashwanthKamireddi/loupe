@@ -20,6 +20,7 @@
 import { redact } from "../_redact.js";
 import { closeStep, currentTrace, openStep } from "../trace.js";
 import type { Step } from "../types.js";
+import { isDirectCaptureActive } from "./index.js";
 import { detectProviderFromHost, looksLikeOpenAICompatible } from "./_providers.js";
 
 const PATCH_FLAG = "__loupePatched__";
@@ -61,7 +62,9 @@ function makeWrappedFetch(original: Fetchable): Fetchable {
     init?: RequestInit,
   ): Promise<Response> {
     const url = extractUrl(input);
-    if (!currentTrace()) return original(input as RequestInfo, init);
+    if (!currentTrace() || isDirectCaptureActive()) {
+      return original(input as RequestInfo, init);
+    }
 
     const body = parseBody(init?.body);
     const provider = classify(url, body);
