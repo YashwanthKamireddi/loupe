@@ -154,14 +154,26 @@ def start(
 
 
 @app.command("list")
-def list_traces() -> None:
+def list_traces(
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Output the trace list as a JSON array. Pipeable + scriptable.",
+    ),
+) -> None:
     """List all traces stored locally.
 
     Uses the DuckDB index when available (millisecond-level for thousands of
     traces). Falls back to a disk walk if the index is missing or broken.
+
+    With ``--json`` the output is a single JSON array of trace summaries,
+    one object per trace. Designed to be piped into ``jq``, used by CI
+    gates, or processed by other tools — no Rich formatting, no banner.
     """
     traces_dir = _default_dir() / "traces"
     if not traces_dir.exists():
+        if as_json:
+            typer.echo("[]")
+            return
         render_padded(banner(version=__version__), _no_traces_hint())
         return
 
@@ -221,7 +233,29 @@ def list_traces() -> None:
             })
 
     if not rows:
+        if as_json:
+            typer.echo("[]")
+            return
         render_padded(banner(version=__version__), _no_traces_hint())
+        return
+
+    if as_json:
+        # Augment each row with annotation_count so CI/jq pipelines can
+        # filter by "has tags" without a second API call. id stays full-length
+        # in JSON output — truncation is a presentation concern, not data.
+        out_rows = []
+        for row in rows:
+            ann_count = len(ann_store.load(str(row["trace_id"])))
+            out_rows.append({
+                "trace_id":         row["trace_id"],
+                "name":             row["name"],
+                "framework":        row["framework"],
+                "duration_ms":      row["duration_ms"],
+                "step_count":       row["step_count"],
+                "failed":           bool(row["failed"]),
+                "annotation_count": ann_count,
+            })
+        typer.echo(json.dumps(out_rows, indent=2))
         return
 
     narrow = is_narrow()
@@ -275,8 +309,20 @@ def list_traces() -> None:
 
 
 @app.command("show")
-def show_trace(trace_id: str) -> None:
-    """Print the full step-by-step content of one trace."""
+def show_trace(
+    trace_id: str,
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Output the full trace (header + every step + annotations) "
+             "as a JSON object. Pipeable into jq.",
+    ),
+) -> None:
+    """Print the full step-by-step content of one trace.
+
+    With ``--json`` the output is the raw header + steps + annotations
+    structure — the same shape the dashboard's
+    ``GET /api/traces/{id}`` returns. Designed for scripting + CI.
+    """
     path = _find_trace(trace_id)
     if path is None:
         raise typer.Exit(code=1)
@@ -292,8 +338,22 @@ def show_trace(trace_id: str) -> None:
             steps.append(obj)
 
     if header is None:
-        console.print(Text("malformed trace", style=RED))
+        if as_json:
+            typer.echo(json.dumps({"error": "malformed trace"}))
+        else:
+            console.print(Text("malformed trace", style=RED))
         raise typer.Exit(code=1)
+
+    if as_json:
+        from dataclasses import asdict as _asdict
+        anns = AnnotationStore().load(header["trace_id"])
+        payload = {
+            **header,
+            "steps": steps,
+            "annotations": [_asdict(a) for a in anns],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
 
     console.print()
     title = Text()
@@ -1150,11 +1210,29 @@ def _duration_ms(header: dict) -> float | None:
 
 
 @app.command("stats")
-def stats() -> None:
+def stats(
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Output stats as a JSON object instead of the formatted tables. "
+             "Pipeable into jq, ingestible by CI gates.",
+    ),
+) -> None:
     """Aggregate counts + breakdowns across every captured trace.
 
     Uses the DuckDB index when available for O(1)-ish aggregates; falls
     back to walking JSONL files on disk if the index isn't healthy.
+
+    With ``--json``:
+
+        {
+          "trace_count":         N,
+          "failed_count":        N,
+          "step_count":          N,
+          "annotation_count":    N,
+          "median_duration_ms":  N | null,
+          "by_framework":        {framework: count, ...},
+          "by_failure_category": {category: count, ...}
+        }
     """
     import json as _json
     from collections import Counter
@@ -1179,9 +1257,8 @@ def stats() -> None:
         framework_counter.update(indexed_stats["by_framework"])
     else:
         files = sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []
-        if not files:
-            render_padded(banner(version=__version__), _no_traces_hint())
-            return
+        # Fall through to the unified empty-home handler below when files
+        # is empty — that path returns the structured JSON {} response.
         durations_ms: list[float] = []
         for path in files:
             try:
@@ -1211,6 +1288,31 @@ def stats() -> None:
         annotation_total += len(items)
         for ann in items:
             cat_counter[ann.failure_category] += 1
+
+    # Empty-home guard. Falling through to the formatted/JSON paths below
+    # would print zeroed-out tables; the explicit hint is friendlier.
+    if total_traces == 0 and annotation_total == 0:
+        if as_json:
+            typer.echo(_json.dumps({
+                "trace_count": 0, "failed_count": 0, "step_count": 0,
+                "annotation_count": 0, "median_duration_ms": None,
+                "by_framework": {}, "by_failure_category": {},
+            }, indent=2))
+            return
+        render_padded(banner(version=__version__), _no_traces_hint())
+        return
+
+    if as_json:
+        typer.echo(_json.dumps({
+            "trace_count":         total_traces,
+            "failed_count":        failure_count,
+            "step_count":          step_count,
+            "annotation_count":    annotation_total,
+            "median_duration_ms":  median_dur,
+            "by_framework":        dict(framework_counter),
+            "by_failure_category": dict(cat_counter),
+        }, indent=2))
+        return
 
     from rich.box import SIMPLE
     from rich.table import Table

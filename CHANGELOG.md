@@ -7,6 +7,62 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.46] — 2026-05-19  ·  `--json` output for list / stats / show
+
+Three commands now have a ``--json`` flag so real users scripting
+against Loupe — CI gates, jq pipelines, custom dashboards — can
+consume the data programmatically without parsing Rich-formatted
+tables.
+
+### `loupe list --json`
+
+```
+[
+  {
+    "trace_id": "0e0a3b8548cf482190ecec70ab8a95ff",
+    "name": "my-first-agent",
+    "framework": "gemini",
+    "duration_ms": 2016.39,
+    "step_count": 2,
+    "failed": true,
+    "annotation_count": 1
+  },
+  …
+]
+```
+
+Full ``trace_id`` (no truncation — that's a presentation concern, not
+data). Empty home returns ``[]``.
+
+### `loupe stats --json`
+
+```
+{
+  "trace_count":         3,
+  "failed_count":        1,
+  "step_count":          8,
+  "annotation_count":    2,
+  "median_duration_ms":  2516.6,
+  "by_framework":        {"gemini": 3},
+  "by_failure_category": {"hallucination": 1, "other": 1}
+}
+```
+
+Empty home returns the same shape with all counts at 0 and dicts
+empty — never a banner, never a hint. Pipelines stay happy.
+
+### `loupe show <id> --json`
+
+Returns the full header + steps + annotations as one JSON object —
+the same shape ``GET /api/traces/{id}`` returns from the dashboard
+server. The single canonical way to extract one captured trace.
+
+### Tests
+
+- 6 new tests: empty home, populated home, JSON parse, full
+  trace_id preserved, unknown trace exits 1, JSON shape correctness.
+- **285 Python + 37 TypeScript = 322 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.45] — 2026-05-19  ·  Production hardening — every command, every state
 
 End-to-end shakedown of every CLI command against fresh and populated

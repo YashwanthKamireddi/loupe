@@ -697,6 +697,84 @@ def test_replay_resolves_anthropic_and_openai_backends(
     assert _resolve_replay_backend("langgraph", "p", "m", "src") is None
 
 
+# ---------------------------------------------------------------------------
+# JSON output mode — pipeable + scriptable
+# ---------------------------------------------------------------------------
+
+
+def test_list_json_empty_home(runner: CliRunner, loupe_home: Path) -> None:
+    """An empty home returns [] in JSON mode — never a Rich banner."""
+    import json as _json
+    res = runner.invoke(app, ["list", "--json"])
+    assert res.exit_code == 0
+    assert _json.loads(res.output.strip()) == []
+
+
+def test_list_json_with_traces(runner: CliRunner, loupe_home: Path) -> None:
+    """JSON list returns full trace_ids, all expected fields."""
+    import json as _json
+    trace_id = _seed_one_trace(loupe_home)
+    res = runner.invoke(app, ["list", "--json"])
+    assert res.exit_code == 0
+    data = _json.loads(res.output.strip())
+    assert isinstance(data, list)
+    assert len(data) == 1
+    row = data[0]
+    assert row["trace_id"] == trace_id, "JSON must include FULL trace_id, not truncated"
+    assert row["name"] == "cli-test-agent"
+    assert row["framework"] == "test"
+    assert row["failed"] is True
+    assert row["step_count"] == 3
+    assert "annotation_count" in row
+
+
+def test_stats_json_empty_home(runner: CliRunner, loupe_home: Path) -> None:
+    import json as _json
+    res = runner.invoke(app, ["stats", "--json"])
+    assert res.exit_code == 0
+    data = _json.loads(res.output.strip())
+    assert data == {
+        "trace_count": 0, "failed_count": 0, "step_count": 0,
+        "annotation_count": 0, "median_duration_ms": None,
+        "by_framework": {}, "by_failure_category": {},
+    }
+
+
+def test_stats_json_with_traces(runner: CliRunner, loupe_home: Path) -> None:
+    import json as _json
+    _seed_one_trace(loupe_home)
+    _seed_one_trace(loupe_home)
+    res = runner.invoke(app, ["stats", "--json"])
+    assert res.exit_code == 0
+    data = _json.loads(res.output.strip())
+    assert data["trace_count"] == 2
+    assert data["failed_count"] == 2
+    assert data["step_count"] == 6
+    assert data["by_framework"] == {"test": 2}
+
+
+def test_show_json_emits_full_trace_payload(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """show --json returns header + steps + annotations as a single object."""
+    import json as _json
+    trace_id = _seed_one_trace(loupe_home)
+    res = runner.invoke(app, ["show", trace_id[:12], "--json"])
+    assert res.exit_code == 0
+    data = _json.loads(res.output.strip())
+    assert data["trace_id"] == trace_id
+    assert data["name"] == "cli-test-agent"
+    assert isinstance(data["steps"], list) and len(data["steps"]) == 3
+    assert "annotations" in data
+
+
+def test_show_json_unknown_trace_exits_nonzero(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    res = runner.invoke(app, ["show", "deadbeef", "--json"])
+    assert res.exit_code == 1
+
+
 def test_parse_duration_rejects_garbage() -> None:
     from loupe.cli import _parse_duration
 
