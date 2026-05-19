@@ -8,6 +8,44 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.37] — 2026-05-19
+
+### CLI — Vercel/Stripe-grade visual polish
+
+The CLI rendered correctly but didn't *feel* crafted. Pass-by-pass:
+
+- **New banner.** Dropped the heavy `─────` box. Now: a single brand
+  line (`◉  loupe  vX.X.X`), an optional italic subtitle, and a
+  whisper-thin dotted rule. Matches the design language of the gh /
+  vercel / stripe CLIs.
+- **Real spinners.** `loupe doctor` now shows a Rich spinner labelled
+  "Scanning installed integrations" while it walks the package list.
+  Auto-disables on non-TTY (CI logs stay grep-friendly).
+- **Adaptive width.** `loupe list` collapses to four columns
+  (name · duration · steps · status) under 88 cols and expands to six
+  (adds trace_id + framework) at wider terminals. Status column is
+  never dropped — it's the most decision-relevant.
+- **Refined copy.** Welcome screen reads "3 traces captured" instead
+  of "YOU HAVE 3 TRACE(S) CAPTURED". Section heading style preserved
+  for visual rhythm.
+
+### Dashboard — no more Google Fonts CDN
+
+Removed the `<link rel="stylesheet" href="https://fonts.googleapis...">`
+preconnect chain. The dashboard now uses native system font stacks
+exclusively:
+- Body: `-apple-system / BlinkMacSystemFont / Inter / SF Pro Text / Segoe UI / system-ui`
+- Wordmark serif: `Iowan Old Style / Georgia` (system on every OS)
+- Mono: `SF Mono / Menlo / monospace`
+
+Result: zero CDN dependency, instant load, works offline, no FOUT,
+no privacy-leaking third-party request when you open the dashboard.
+The serif system fallback (Iowan/Georgia) is still distinctively
+non-AI and matches the forensic-dossier aesthetic.
+
+### Tests
+- 213 Python + 37 TypeScript = 250 tests. Ruff + mypy + tsc clean.
+
 ## [0.0.36] — 2026-05-19
 
 ### Removed — `loupe demo` and all fake content

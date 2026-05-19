@@ -47,6 +47,7 @@ from loupe._tui import (
     kv_table,
     render_padded,
     section,
+    spinner,
     stack,
     status_table,
 )
@@ -88,19 +89,20 @@ def _show_welcome() -> None:
 
     if trace_count == 0:
         next_steps = stack(
-            section("Get started in 30 seconds"),
+            section("Quickstart"),
             Text(),
-            cmd("loupe init my-agent  # scaffold an instrumented starter project"),
+            cmd("loupe init my-agent          # scaffold a real working starter"),
             cmd("cd my-agent && python agent.py 'your first question'"),
-            cmd("loupe ui             # open the forensic dashboard"),
+            cmd("loupe ui                     # open the forensic dashboard"),
         )
     else:
+        plural = "trace" if trace_count == 1 else "traces"
         next_steps = stack(
-            section(f"You have {trace_count} trace(s) captured"),
+            section(f"{trace_count} {plural} captured"),
             Text(),
             cmd("loupe ui            # open the forensic dashboard"),
-            cmd("loupe list          # see them in the terminal"),
-            cmd("loupe stats         # aggregate counts + framework breakdown"),
+            cmd("loupe list          # compact table of every run"),
+            cmd("loupe stats         # aggregate breakdown by framework + failure"),
         )
 
     render_padded(
@@ -109,8 +111,9 @@ def _show_welcome() -> None:
         next_steps,
         Text(),
         section("Help"),
-        hint("loupe doctor        — diagnose your install + integrations"),
-        hint("loupe --help        — full command reference"),
+        Text(),
+        hint("loupe doctor          diagnose your install + integrations"),
+        hint("loupe --help          full command reference"),
     )
 
 
@@ -167,9 +170,13 @@ def list_traces() -> None:
     from rich.box import SIMPLE
     from rich.table import Table
 
-    # Design: surface the *information dense* columns first (name, framework)
-    # and let the trace_id be short (8 chars is enough to disambiguate hundreds
-    # of traces). No column may silently collapse — every column has min_width.
+    from loupe._tui import is_narrow
+
+    # Adaptive layout: at <88 cols we drop the trace_id + framework columns
+    # so the user always sees the essentials (name, duration, status).
+    # Status is the most decision-relevant column — we never drop it.
+    narrow = is_narrow()
+
     table = Table(
         show_header=True,
         header_style=f"dim {DIM}",
@@ -178,11 +185,11 @@ def list_traces() -> None:
         title=Text("traces", style=f"italic {AMBER}"),
         title_justify="left",
     )
-    # Compact layout: tag indicator is folded into the name as a leading ◉
-    # to free up a column. Total width fits in 80 cols.
-    table.add_column("name", style=INK, no_wrap=False, min_width=22, ratio=3)
-    table.add_column("trace_id", style=AMBER, no_wrap=True, width=8)
-    table.add_column("framework", style=DIM, no_wrap=True, min_width=10, ratio=2)
+    # Tag indicator is folded into the name as a leading ◉ to save a column.
+    table.add_column("name", style=INK, no_wrap=False, min_width=18, ratio=3)
+    if not narrow:
+        table.add_column("trace_id", style=AMBER, no_wrap=True, width=8)
+        table.add_column("framework", style=DIM, no_wrap=True, min_width=8, ratio=2)
     table.add_column("duration", justify="right", style=DIM, no_wrap=True, width=8)
     table.add_column("steps", justify="right", no_wrap=True, width=5)
     table.add_column("status", no_wrap=True, width=6)
@@ -204,14 +211,17 @@ def list_traces() -> None:
         if ann_count > 0:
             name_cell.append("◉ ", style=AMBER)
         name_cell.append(header["name"], style=INK)
-        table.add_row(
-            name_cell,
-            header["trace_id"][:8],
-            header.get("framework") or "—",
-            duration,
-            str(steps),
-            status,
-        )
+        if narrow:
+            table.add_row(name_cell, duration, str(steps), status)
+        else:
+            table.add_row(
+                name_cell,
+                header["trace_id"][:8],
+                header.get("framework") or "—",
+                duration,
+                str(steps),
+                status,
+            )
 
     console.print()
     console.print(table)
@@ -565,19 +575,20 @@ def doctor(
         ("httpx", "universal", "universal"),
         ("fastapi", "ui", "ui"),
     ]
-    for pkg, integration, extra in integrations:
-        try:
-            importlib.import_module(pkg)
-            ver = md.version(pkg)
-            rows.append((f"integration:{integration}", _badge_ready(), f"{pkg} {ver}"))
-        except (ImportError, md.PackageNotFoundError):
-            # Escape the square brackets so Rich doesn't interpret them as markup.
-            extras_hint = f"pip install 'loupe\\[{extra}]'"
-            rows.append((
-                f"integration:{integration}",
-                _badge_missing(),
-                extras_hint,
-            ))
+    with spinner("Scanning installed integrations"):
+        for pkg, integration, extra in integrations:
+            try:
+                importlib.import_module(pkg)
+                ver = md.version(pkg)
+                rows.append((f"integration:{integration}", _badge_ready(), f"{pkg} {ver}"))
+            except (ImportError, md.PackageNotFoundError):
+                # Escape the square brackets so Rich doesn't interpret them as markup.
+                extras_hint = f"pip install 'loupe\\[{extra}]'"
+                rows.append((
+                    f"integration:{integration}",
+                    _badge_missing(),
+                    extras_hint,
+                ))
     rows.append(("python", _badge_ok(), sys.version.split()[0]))
 
     render_padded(

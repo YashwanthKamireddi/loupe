@@ -70,11 +70,18 @@
   padding: 0;
 }
 
+/* Self-hosted: native system stacks only. Loads instantly, works offline,
+   no CDN dependency, no FOUT. The serif stack we use for the wordmark is
+   genuinely distinctive without needing a webfont download. */
 html, body {
   height: 100%;
   background: var(--bg-base);
   color: var(--ink);
-  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont,
+    "Inter", "SF Pro Text", "Segoe UI", "Helvetica Neue",
+    system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";    /* nicer numerals on most stacks */
   font-size: var(--t-md);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;

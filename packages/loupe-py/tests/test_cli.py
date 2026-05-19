@@ -73,7 +73,8 @@ def _seed_one_trace(home: Path) -> str:
 def test_welcome_screen_when_no_args(runner: CliRunner, loupe_home: Path) -> None:
     result = runner.invoke(app, [])
     assert result.exit_code == 0
-    assert "L O U P E" in result.output
+    # New minimal banner renders the brand as lowercase "loupe" with a ◉ mark.
+    assert "loupe" in result.output.lower()
     # Empty-state copy points at the real first-run flow.
     assert "loupe init" in result.output
 
