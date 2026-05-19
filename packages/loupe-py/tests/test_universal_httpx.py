@@ -168,6 +168,43 @@ def test_idempotent_patch() -> None:
     assert httpx_mod.patch() is False
 
 
+def test_direct_capture_suppresses_httpx_layer(store: JSONLStore) -> None:
+    """When a direct SDK integration is active, universal-httpx must skip.
+
+    In production, the anthropic/openai SDK integrations call into httpx
+    under the hood — without this dedup, every real call would emit two
+    Steps (one from the SDK wrapper, one from the http interceptor).
+    """
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+
+    httpx._state["response"] = _make_response(200, {"content": [{"text": "hi"}]})
+
+    from loupe.integrations import suppress_http_capture
+
+    @trace(framework="universal-test", store=store)
+    def run() -> None:
+        # Mimic what the anthropic integration does: claim the HTTP layer
+        # so universal-httpx doesn't double-record.
+        with suppress_http_capture():
+            httpx.Client().send(
+                _make_request(
+                    "https://api.anthropic.com/v1/messages",
+                    body={"messages": [], "model": "claude-haiku"},
+                )
+            )
+
+    run()
+    steps = _read_steps(store)
+    # The universal layer saw the call but the direct-capture flag was on,
+    # so it must NOT have emitted a step.
+    assert len(steps) == 0, "universal-httpx should skip when direct capture active"
+
+
 def test_captures_error(store: JSONLStore) -> None:
     _install_fake_httpx()
     sys.modules.pop("loupe.integrations.httpx", None)

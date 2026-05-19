@@ -65,11 +65,28 @@ def test_ingest_accepts_minimal_payload(loupe_home: Path) -> None:
     assert (loupe_home / "traces" / f"{t.trace_id}.jsonl").exists()
 
 
-def test_ingest_rejects_bad_kind(loupe_home: Path) -> None:
+def test_ingest_accepts_user_defined_kind(loupe_home: Path) -> None:
+    """Free-form kinds: user code uses domain-specific names like 'plan'."""
+    store = JSONLStore(root=loupe_home / "traces")
+    payload = _payload()
+    payload["steps"][0]["kind"] = "user-defined-step"
+    trace = ingest(payload, store=store)
+    assert trace.steps[0].kind == "user-defined-step"
+
+
+def test_ingest_rejects_empty_kind(loupe_home: Path) -> None:
     store = JSONLStore(root=loupe_home / "traces")
     bad = _payload()
-    bad["steps"][0]["kind"] = "not-a-real-kind"
-    with pytest.raises(IngestError, match="steps\\[0\\].kind"):
+    bad["steps"][0]["kind"] = ""
+    with pytest.raises(IngestError, match=r"steps\[0\].kind"):
+        ingest(bad, store=store)
+
+
+def test_ingest_rejects_oversized_kind(loupe_home: Path) -> None:
+    store = JSONLStore(root=loupe_home / "traces")
+    bad = _payload()
+    bad["steps"][0]["kind"] = "k" * 65
+    with pytest.raises(IngestError, match=r"steps\[0\].kind"):
         ingest(bad, store=store)
 
 
@@ -102,12 +119,18 @@ def test_http_ingest_endpoint(loupe_home: Path) -> None:
 def test_http_ingest_validation_errors(loupe_home: Path) -> None:
     client = TestClient(create_app())
 
-    # 422 for malformed but parseable
+    # 422 for malformed but parseable — empty kind is invalid (must be a non-empty string)
     bad = _payload()
-    bad["steps"][0]["kind"] = "garbage"
+    bad["steps"][0]["kind"] = ""
     res = client.post("/api/traces", json=bad)
     assert res.status_code == 422
     assert "kind" in res.json()["detail"]
+
+    # 422 for kind exceeding the 64-char cap
+    too_long = _payload()
+    too_long["steps"][0]["kind"] = "k" * 65
+    res = client.post("/api/traces", json=too_long)
+    assert res.status_code == 422
 
     # 422 for missing required field
     res = client.post("/api/traces", json={"steps": []})

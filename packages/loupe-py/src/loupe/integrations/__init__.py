@@ -8,12 +8,45 @@ The `patch_all()` helper turns on every integration whose dependency is
 already installed. Missing packages are skipped silently. Returns a dict
 mapping integration name → bool (True if patched this call, False if it was
 already patched or not available).
+
+Double-capture avoidance
+------------------------
+Direct SDK integrations (anthropic, openai, ...) and universal-httpx will
+both see the same network call when active simultaneously. To avoid emitting
+two Steps for one logical call, direct integrations set
+`direct_capture_active` to True for the duration of their wrapper; the
+universal-httpx layer reads it and skips recording while True.
+
+ContextVar (not threadlocal) so async tasks each get their own state.
 """
 
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+# True while a direct integration's wrapper is on the stack. When True the
+# httpx universal interceptor MUST NOT emit a Step (the direct integration
+# is already capturing this call at a richer level).
+direct_capture_active: ContextVar[bool] = ContextVar(
+    "loupe_direct_capture_active", default=False
+)
+
+
+@contextmanager
+def suppress_http_capture() -> Iterator[None]:
+    """Mark the current task as "a direct SDK integration is capturing this".
+
+    Universal-httpx checks this flag and skips emitting a duplicate Step.
+    Safe to nest. Restores the prior state on exit.
+    """
+    token = direct_capture_active.set(True)
+    try:
+        yield
+    finally:
+        direct_capture_active.reset(token)
 
 # Each entry: (cli-visible name, module path, predicate-package to importlib-check first).
 # Order matters only for cosmetics in the report.

@@ -65,8 +65,9 @@
         },
         "kind": {
           "type": "string",
-          "enum": ["llm-call", "tool-call", "io", "thought", "error", "custom"],
-          "description": "Type of step. The dashboard color-codes these."
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Type of step. The dashboard color-codes these. Recommended values: llm-call, tool-call, io, thought, error, custom — but any short string is allowed so user code can record domain-specific kinds (plan, retrieve, final, etc.) without schema friction."
         },
         "name": {
           "type": "string",

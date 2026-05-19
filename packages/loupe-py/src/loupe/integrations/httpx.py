@@ -30,6 +30,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from loupe._redact import redact
+from loupe.integrations import direct_capture_active
 from loupe.integrations._providers import (
     detect_provider_from_host,
     looks_like_openai_compatible,
@@ -63,7 +64,7 @@ def _wrap_sync(original: Any) -> Any:
     @functools.wraps(original)
     def wrapper(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        if current_trace() is None:
+        if current_trace() is None or direct_capture_active.get():
             return original(self, request, *args, **kwargs)
 
         body = _safe_read_request_body(request)
@@ -90,7 +91,7 @@ def _wrap_async(original: Any) -> Any:
     @functools.wraps(original)
     async def wrapper(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
         started = time.time()
-        if current_trace() is None:
+        if current_trace() is None or direct_capture_active.get():
             return await original(self, request, *args, **kwargs)
 
         body = _safe_read_request_body(request)

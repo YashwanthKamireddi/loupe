@@ -18,11 +18,23 @@ import uuid
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 from loupe.store import Store, default_store
 
-StepKind = Literal["llm-call", "tool-call", "io", "thought", "error", "custom"]
+# Kind is a free-form short string. The recommended set below covers the
+# vocabulary the dashboard color-codes; user code can record domain-specific
+# kinds (plan, retrieve, final, …) and the schema, dashboard, and exporters
+# all accept them.
+StepKind = str
+RECOMMENDED_KINDS: tuple[str, ...] = (
+    "llm-call",
+    "tool-call",
+    "io",
+    "thought",
+    "error",
+    "custom",
+)
 
 T = TypeVar("T")
 

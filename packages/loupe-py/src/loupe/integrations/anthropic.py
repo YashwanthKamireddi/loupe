@@ -27,6 +27,7 @@ import uuid
 from typing import Any
 
 from loupe._redact import redact
+from loupe.integrations import suppress_http_capture
 from loupe.integrations._streaming import TracedAsyncStream, TracedSyncStream
 from loupe.trace import Step, current_trace
 
@@ -72,7 +73,8 @@ def _wrap_sync(original: Any) -> Any:
             error: BaseException | None = None
             result: Any = None
             try:
-                result = original(self, *args, **kwargs)
+                with suppress_http_capture():
+                    result = original(self, *args, **kwargs)
                 return result
             except BaseException as exc:
                 error = exc
@@ -82,7 +84,8 @@ def _wrap_sync(original: Any) -> Any:
 
         # Streaming path: hand back a transparent proxy that tees into a Step.
         try:
-            original_stream = original(self, *args, **kwargs)
+            with suppress_http_capture():
+                original_stream = original(self, *args, **kwargs)
         except BaseException as exc:
             _emit_single(kwargs, None, exc, started)
             raise
@@ -111,7 +114,8 @@ def _wrap_async(original: Any) -> Any:
             error: BaseException | None = None
             result: Any = None
             try:
-                result = await original(self, *args, **kwargs)
+                with suppress_http_capture():
+                    result = await original(self, *args, **kwargs)
                 return result
             except BaseException as exc:
                 error = exc
@@ -121,7 +125,8 @@ def _wrap_async(original: Any) -> Any:
 
         # Streaming path
         try:
-            original_stream = await original(self, *args, **kwargs)
+            with suppress_http_capture():
+                original_stream = await original(self, *args, **kwargs)
         except BaseException as exc:
             _emit_single(kwargs, None, exc, started)
             raise

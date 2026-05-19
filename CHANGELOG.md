@@ -8,6 +8,49 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.31] — 2026-05-19
+
+Two real-world production bugs surfaced when running Loupe end-to-end
+against the live Anthropic SDK against a local stub of api.anthropic.com.
+
+### Fixed — `kind` is now a free-form string
+
+The schema and ingest validator used to gate step `kind` against a closed
+enum: `{llm-call, tool-call, io, thought, error, custom}`. Real user code
+records domain-specific kinds — `plan`, `retrieve`, `final`, `step.42`,
+etc. — and `loupe verify` would then reject the user's perfectly normal
+trace at the very first run.
+
+- `kind` is now any non-empty string up to 64 chars.
+- Recommended kinds are still listed in the spec + dashboard color-codes,
+  but they are guidance, not gates.
+- Wire format unchanged for canonical kinds; existing traces validate.
+
+### Fixed — direct SDK and universal-httpx no longer double-capture
+
+When `patch_all()` activates both the `anthropic` SDK integration and the
+universal-httpx interceptor, the same logical call was previously
+recorded twice — once at the SDK layer (richer view) and once at the
+HTTP layer (raw view). Polluted every real trace.
+
+- Added `loupe.integrations.suppress_http_capture()` — a ContextVar-backed
+  guard that direct integrations wrap their wrapped SDK call with.
+- universal-httpx now skips emit when the guard is on.
+- Async-safe (ContextVar, not threadlocal).
+- Direct integrations updated: anthropic, openai.
+
+### Tests
+- 1 new universal-httpx test pins the suppression contract.
+- 3 new ingest tests cover free-form kinds + 64-char cap + empty rejection.
+- 5 new schema-parity VALID payloads with user-defined kinds.
+- **203 Python + 35 TypeScript = 238 tests.** Ruff + mypy + tsc clean.
+
+### Real-world validation
+- Captured a live agent → real anthropic SDK → real httpx → real Loupe
+  → JSONL on disk → `loupe verify` + `show` + `stats` + `report` +
+  `report --html` + `loupe ui` + full REST endpoint walk + path-traversal
+  attempt = all clean. No traceback in any code path.
+
 ## [0.0.30] — 2026-05-19
 
 ### Added — `loupe purge` for trace lifecycle

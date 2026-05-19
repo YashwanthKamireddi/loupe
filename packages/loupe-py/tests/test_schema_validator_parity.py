@@ -71,10 +71,17 @@ VALID = [
             }
         ],
     },
-    # every step kind
+    # every recommended step kind
     *[
         {"name": "x", "steps": [{"kind": k, "name": "n"}]}
         for k in ["llm-call", "tool-call", "io", "thought", "error", "custom"]
+    ],
+    # user-defined kinds are allowed (free-form strings under 64 chars).
+    # Production user code routinely records domain-specific kinds like
+    # "plan", "retrieve", "final" — gating on a fixed enum was hostile.
+    *[
+        {"name": "x", "steps": [{"kind": k, "name": "n"}]}
+        for k in ["plan", "retrieve", "final", "step.42", "user-defined"]
     ],
 ]
 
@@ -91,8 +98,10 @@ INVALID = [
     {"name": "x", "steps": [{"name": "n"}]},
     # step missing name
     {"name": "x", "steps": [{"kind": "thought"}]},
-    # invalid kind
-    {"name": "x", "steps": [{"kind": "garbage", "name": "n"}]},
+    # kind empty string
+    {"name": "x", "steps": [{"kind": "", "name": "n"}]},
+    # kind too long (>64 chars)
+    {"name": "x", "steps": [{"kind": "k" * 65, "name": "n"}]},
     # step name empty
     {"name": "x", "steps": [{"kind": "thought", "name": ""}]},
 ]

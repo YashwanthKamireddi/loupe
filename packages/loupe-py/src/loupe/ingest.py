@@ -36,7 +36,12 @@ from typing import Any
 from loupe.store import JSONLStore
 from loupe.trace import Step, Trace
 
-_ALLOWED_KINDS = {"llm-call", "tool-call", "io", "thought", "error", "custom"}
+_MAX_KIND_LENGTH = 64
+# Recommended kinds the dashboard color-codes. User code is free to record
+# domain-specific kinds (plan, retrieve, final, …) without schema friction.
+_RECOMMENDED_KINDS = frozenset(
+    {"llm-call", "tool-call", "io", "thought", "error", "custom"}
+)
 
 # Forbidden characters in any id we use as a filename component.
 # `/` and `\` are obvious; null byte breaks pathlib on every OS;
@@ -99,9 +104,11 @@ def ingest(payload: dict[str, Any], *, store: JSONLStore | None = None) -> Trace
         if not isinstance(raw, dict):
             raise IngestError(f"steps[{idx}] must be an object")
         kind = raw.get("kind")
-        if kind not in _ALLOWED_KINDS:
+        if not isinstance(kind, str) or not kind:
+            raise IngestError(f"steps[{idx}].kind must be a non-empty string")
+        if len(kind) > _MAX_KIND_LENGTH:
             raise IngestError(
-                f"steps[{idx}].kind must be one of {sorted(_ALLOWED_KINDS)}, got {kind!r}"
+                f"steps[{idx}].kind exceeds {_MAX_KIND_LENGTH} chars"
             )
         step_name = raw.get("name")
         if not isinstance(step_name, str) or not step_name:
