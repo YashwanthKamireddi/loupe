@@ -5,8 +5,56 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Planned for 0.1.0
-- DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
+
+## [0.0.38] — 2026-05-19  ·  DuckDB index for sub-millisecond queries
+
+The v0.2 foundation: an embedded DuckDB index over the JSONL trace
+store. `loupe list / stats` were O(N) disk scans; now they're indexed
+SQL queries that stay fast at 10k+ traces.
+
+### Added
+
+- **`loupe/index.py`** — `JSONLIndex` class wrapping an embedded
+  DuckDB database at `~/.loupe/index.duckdb`.
+  - Schema-versioned with automatic rebuild on version drift.
+  - In-process write lock; safe across threads.
+  - Best-effort everywhere: any failure returns False/None, never
+    raises. The JSONL files on disk remain the source of truth.
+
+- **Background indexer in `JSONLStore.save()`** — every trace write
+  now dispatches a daemon thread to upsert the index. The hot path
+  stays under 100µs/step (perf budget unchanged). If indexing
+  fails, the next `loupe index rebuild` reconciles.
+
+- **CLI subcommands** —
+  - `loupe index info` — path, size, row counts, schema version.
+  - `loupe index rebuild` — drop the index and re-walk JSONL files.
+    Crash-recovery path; safe to run any time.
+
+- **Indexed `loupe list`** — uses the index when available, falls
+  back to a disk walk if it's missing or broken. Prints a faint
+  `· indexed` footer when the fast path served the result.
+
+- **Indexed `loupe stats`** — aggregate counts, framework breakdown,
+  and median duration now come from a single SQL query.
+
+- **`loupe purge --yes` cleans the index** — when a trace JSONL is
+  deleted, its corresponding rows are removed from the index too.
+
+### Opt-out
+
+Set `LOUPE_DISABLE_INDEX=1` to skip indexing entirely (useful on NFS
+mounts without proper locking, or in restricted CI environments).
+
+### Tests
+
+- 12 new tests covering: upsert correctness, idempotence, failure
+  marking, ordering, stats aggregates, rebuild from disk, removal,
+  health info, missing-index fallback, background-thread upsert
+  via JSONLStore, env-var disable, and schema-version migration.
+- **225 Python + 37 TypeScript = 262 tests.** Ruff + mypy + tsc clean.
+- Performance budgets (<100µs/step, <5ms/trace) unchanged.
 
 ## [0.0.37] — 2026-05-19
 

@@ -51,6 +51,31 @@ class JSONLStore:
             for step in steps:
                 f.write(json.dumps({"_type": "step", **step}, separators=(",", ":")) + "\n")
 
+        # Best-effort: schedule a DuckDB index upsert in a daemon background
+        # thread so the hot path (trace.save) stays in microseconds. The JSONL
+        # file on disk is the source of truth — if the index call fails, the
+        # next `loupe index rebuild` catches up.
+        #
+        # Set LOUPE_DISABLE_INDEX=1 to opt out entirely (e.g., NFS mounts).
+        if not os.environ.get("LOUPE_DISABLE_INDEX"):
+            _schedule_index_upsert(path)
+
+
+def _schedule_index_upsert(path: Path) -> None:
+    """Fire-and-forget background upsert. Never raises."""
+    import threading
+
+    def _run() -> None:
+        try:
+            from loupe.index import upsert_trace_file
+            upsert_trace_file(path)
+        except Exception:  # noqa: BLE001 — best-effort, swallow silently
+            pass
+
+    # daemon=True so the upsert thread never blocks interpreter exit. If the
+    # process dies mid-upsert, `loupe index rebuild` reconciles on next run.
+    threading.Thread(target=_run, daemon=True).start()
+
 
 _default: Store | None = None
 

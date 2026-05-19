@@ -155,28 +155,76 @@ def start(
 
 @app.command("list")
 def list_traces() -> None:
-    """List all traces stored locally."""
+    """List all traces stored locally.
+
+    Uses the DuckDB index when available (millisecond-level for thousands of
+    traces). Falls back to a disk walk if the index is missing or broken.
+    """
     traces_dir = _default_dir() / "traces"
     if not traces_dir.exists():
         render_padded(banner(version=__version__), _no_traces_hint())
         return
 
-    files = sorted(traces_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not files:
-        render_padded(banner(version=__version__), _no_traces_hint())
-        return
-
-    ann_store = AnnotationStore()
     from rich.box import SIMPLE
     from rich.table import Table
 
     from loupe._tui import is_narrow
+    from loupe.index import default_index
 
-    # Adaptive layout: at <88 cols we drop the trace_id + framework columns
-    # so the user always sees the essentials (name, duration, status).
-    # Status is the most decision-relevant column — we never drop it.
+    ann_store = AnnotationStore()
+
+    # Try the index first.
+    indexed = default_index().list_traces(limit=100)
+    used_index = bool(indexed)
+
+    if used_index:
+        rows = [
+            {
+                "trace_id": r.trace_id,
+                "name": r.name,
+                "framework": r.framework,
+                "duration_ms": (
+                    (r.ended_at - r.started_at) * 1000
+                    if (r.ended_at is not None and r.started_at is not None)
+                    else None
+                ),
+                "step_count": r.step_count,
+                "failed": r.failed,
+            }
+            for r in indexed
+        ]
+    else:
+        files = sorted(
+            traces_dir.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            render_padded(banner(version=__version__), _no_traces_hint())
+            return
+        rows = []
+        for file in files[:100]:
+            header = _read_header(file)
+            if header is None:
+                continue
+            steps = sum(1 for _ in file.open()) - 1
+            rows.append({
+                "trace_id": header["trace_id"],
+                "name": header["name"],
+                "framework": header.get("framework"),
+                "duration_ms": (
+                    (header["ended_at"] - header["started_at"]) * 1000
+                    if header.get("ended_at") else None
+                ),
+                "step_count": steps,
+                "failed": header.get("metadata", {}).get("failed", False),
+            })
+
+    if not rows:
+        render_padded(banner(version=__version__), _no_traces_hint())
+        return
+
     narrow = is_narrow()
-
     table = Table(
         show_header=True,
         header_style=f"dim {DIM}",
@@ -185,7 +233,6 @@ def list_traces() -> None:
         title=Text("traces", style=f"italic {AMBER}"),
         title_justify="left",
     )
-    # Tag indicator is folded into the name as a leading ◉ to save a column.
     table.add_column("name", style=INK, no_wrap=False, min_width=18, ratio=3)
     if not narrow:
         table.add_column("trace_id", style=AMBER, no_wrap=True, width=8)
@@ -194,37 +241,36 @@ def list_traces() -> None:
     table.add_column("steps", justify="right", no_wrap=True, width=5)
     table.add_column("status", no_wrap=True, width=6)
 
-    for file in files[:100]:
-        header = _read_header(file)
-        if header is None:
-            continue
-        steps = sum(1 for _ in file.open()) - 1
-        duration = (
-            f"{(header['ended_at'] - header['started_at']) * 1000:.0f} ms"
-            if header.get("ended_at") else "—"
-        )
-        failed = header.get("metadata", {}).get("failed", False)
-        status = Text("failed", style=RED) if failed else Text("ok", style=GREEN)
-        ann_count = len(ann_store.load(header["trace_id"]))
-        # Prefix tagged traces with ◉ in the name column to save a column.
+    for row in rows:
+        dur_ms = row["duration_ms"]
+        duration = f"{dur_ms:.0f} ms" if isinstance(dur_ms, (int, float)) else "—"
+        status = Text("failed", style=RED) if row["failed"] else Text("ok", style=GREEN)
+        trace_id_str = str(row["trace_id"])
+        name_str = str(row["name"])
+        framework_str = str(row["framework"]) if row.get("framework") else "—"
+        step_count_str = str(row["step_count"])
+        ann_count = len(ann_store.load(trace_id_str))
         name_cell = Text()
         if ann_count > 0:
             name_cell.append("◉ ", style=AMBER)
-        name_cell.append(header["name"], style=INK)
+        name_cell.append(name_str, style=INK)
         if narrow:
-            table.add_row(name_cell, duration, str(steps), status)
+            table.add_row(name_cell, duration, step_count_str, status)
         else:
             table.add_row(
                 name_cell,
-                header["trace_id"][:8],
-                header.get("framework") or "—",
+                trace_id_str[:8],
+                framework_str,
                 duration,
-                str(steps),
+                step_count_str,
                 status,
             )
 
     console.print()
     console.print(table)
+    # Subtle index-mode hint at the bottom, dim so it doesn't compete.
+    if used_index:
+        console.print(Text("  · indexed", style=DIM))
     console.print()
 
 
@@ -871,38 +917,55 @@ def _duration_ms(header: dict) -> float | None:
 def stats() -> None:
     """Aggregate counts + breakdowns across every captured trace.
 
-    Quick overview: total traces, failures, total steps, total tags, breakdown
-    by framework, and the failure-category histogram from LoupeBench tags.
+    Uses the DuckDB index when available for O(1)-ish aggregates; falls
+    back to walking JSONL files on disk if the index isn't healthy.
     """
     import json as _json
     from collections import Counter
 
+    from loupe.index import default_index
+
     traces_dir = _default_dir() / "traces"
     ann_store = AnnotationStore()
-    files = sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []
-    if not files:
-        render_padded(banner(version=__version__), _no_traces_hint())
-        return
+    indexed_stats = default_index().stats()
 
     framework_counter: Counter[str] = Counter()
     failure_count = 0
     step_count = 0
-    durations_ms: list[float] = []
+    total_traces = 0
+    median_dur: float | None = None
 
-    for path in files:
-        try:
-            with path.open() as f:
-                first = _json.loads(next(f))
-        except (StopIteration, _json.JSONDecodeError):
-            continue
-        if first.get("_type") != "trace":
-            continue
-        framework_counter[first.get("framework") or "(none)"] += 1
-        if first.get("metadata", {}).get("failed"):
-            failure_count += 1
-        step_count += max(0, sum(1 for _ in path.open()) - 1)
-        if first.get("ended_at") and first.get("started_at"):
-            durations_ms.append((first["ended_at"] - first["started_at"]) * 1000)
+    if indexed_stats is not None and indexed_stats["trace_count"] > 0:
+        total_traces = indexed_stats["trace_count"]
+        failure_count = indexed_stats["failed_count"]
+        step_count = indexed_stats["step_count"]
+        median_dur = indexed_stats["median_duration_ms"]
+        framework_counter.update(indexed_stats["by_framework"])
+    else:
+        files = sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []
+        if not files:
+            render_padded(banner(version=__version__), _no_traces_hint())
+            return
+        durations_ms: list[float] = []
+        for path in files:
+            try:
+                with path.open() as f:
+                    first = _json.loads(next(f))
+            except (StopIteration, _json.JSONDecodeError):
+                continue
+            if first.get("_type") != "trace":
+                continue
+            framework_counter[first.get("framework") or "(none)"] += 1
+            if first.get("metadata", {}).get("failed"):
+                failure_count += 1
+            step_count += max(0, sum(1 for _ in path.open()) - 1)
+            if first.get("ended_at") and first.get("started_at"):
+                durations_ms.append(
+                    (first["ended_at"] - first["started_at"]) * 1000
+                )
+        total_traces = len(files)
+        if durations_ms:
+            median_dur = sorted(durations_ms)[len(durations_ms) // 2]
 
     # Annotation category histogram
     cat_counter: Counter[str] = Counter()
@@ -917,14 +980,12 @@ def stats() -> None:
     from rich.table import Table
 
     summary = kv_table([
-        ("traces", str(len(files))),
-        ("failed", f"{failure_count}  ({failure_count / len(files):.0%})"),
+        ("traces", str(total_traces)),
+        ("failed", f"{failure_count}  ({failure_count / total_traces:.0%})"
+         if total_traces else "0"),
         ("steps", str(step_count)),
         ("tagged", str(annotation_total)),
-        (
-            "median dur",
-            f"{sorted(durations_ms)[len(durations_ms) // 2]:.0f} ms" if durations_ms else "—",
-        ),
+        ("median dur", f"{median_dur:.0f} ms" if median_dur is not None else "—"),
     ])
 
     framework_table = Table(
@@ -1113,6 +1174,9 @@ def purge(
 
     import contextlib
 
+    from loupe.index import default_index
+    idx = default_index()
+
     deleted = 0
     for path, _age in candidates:
         try:
@@ -1121,11 +1185,14 @@ def purge(
             console.print(Text(f"  ✗ could not delete {path.stem[:12]}: {exc}", style=RED))
             continue
         deleted += 1
-        # Best-effort: also remove the sidecar annotation + lock files.
+        # Best-effort: also remove the sidecar annotation + lock files,
+        # and drop the corresponding row from the DuckDB index.
         for suffix in (".json", ".lock"):
             sidecar = annotations_dir / f"{path.stem}{suffix}"
             with contextlib.suppress(OSError):
                 sidecar.unlink(missing_ok=True)
+        with contextlib.suppress(Exception):
+            idx.remove_trace(path.stem)
 
     console.print()
     console.print(Text(f"  ✓ deleted {deleted} trace(s).", style=GREEN))
@@ -1256,6 +1323,59 @@ def providers() -> None:
 def version() -> None:
     """Print Loupe version."""
     console.print(Text("loupe ", style=DIM) + Text(__version__, style=AMBER))
+
+
+# ----------------------------------------------------------------------------
+# `loupe index` subcommands — manage the DuckDB query index
+# ----------------------------------------------------------------------------
+
+index_app = typer.Typer(
+    name="index",
+    help="Manage the DuckDB query index over your captured traces.",
+    no_args_is_help=True,
+)
+app.add_typer(index_app, name="index")
+
+
+@index_app.command("info")
+def index_info() -> None:
+    """Show the index file path, size, and row counts."""
+    from loupe.index import default_index
+
+    info = default_index().info()
+    render_padded(
+        banner("index health", version=__version__),
+        kv_table([
+            ("path",           info["db_path"]),
+            ("exists",         "yes" if info["exists"] else "no"),
+            ("size",           f"{info['size_bytes']:,} bytes"),
+            ("schema version", str(info["schema_version"])),
+            ("traces indexed", str(info.get("trace_count", 0))),
+            ("steps indexed",  str(info.get("step_count", 0))),
+        ] + ([("error", info["error"])] if info.get("error") else [])),
+    )
+
+
+@index_app.command("rebuild")
+def index_rebuild() -> None:
+    """Drop the index and re-walk every JSONL file on disk.
+
+    Safe to run at any time — the JSONL files are the source of truth.
+    Use this if `loupe doctor` reports an index inconsistency, or after
+    moving traces between machines.
+    """
+    from loupe.index import default_index
+
+    with spinner("Rebuilding index from JSONL files"):
+        indexed, skipped = default_index().rebuild()
+
+    console.print()
+    console.print(
+        Text("  ✓ ", style=GREEN)
+        + Text(f"{indexed} trace(s) indexed", style=INK)
+        + (Text(f"  ·  {skipped} skipped", style=DIM) if skipped else Text())
+    )
+    console.print()
 
 
 # ----------------------------------------------------------------------------
