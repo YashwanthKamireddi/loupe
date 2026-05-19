@@ -235,27 +235,63 @@ def _try_import_sae_lens() -> Any:
 class SAEAttributor:
     """Real SAE-based attribution using sae-lens + transformer-lens.
 
-    Not implemented end-to-end in this commit — the orchestration layer
-    above ships first so the plumbing is provable with the mock. The
-    docstring here is the contract the implementation will satisfy:
+    Per-step pipeline:
 
-    1. Load the configured model via ``transformer_lens.HookedTransformer``.
-    2. Load the configured SAE via ``sae_lens.SAE.from_pretrained``.
-    3. Run the prompt through the model with a forward hook on the SAE's
-       target layer; collect hidden states for every prompt+response token.
-    4. Project the hidden states through the SAE, take the post-ReLU
-       activations, and extract top-K features by aggregate magnitude
-       across the response tokens.
-    5. Return them as :class:`FeatureActivation` instances.
+    1. Tokenize ``prompt + " " + response`` with the model's tokenizer.
+    2. Run a forward pass that caches hidden states at the SAE's
+       configured hook (e.g. ``blocks.6.hook_resid_pre``).
+    3. Encode those hidden states through the SAE → post-ReLU
+       feature activations of shape ``[batch, seq, d_sae]``.
+    4. Sum across the sequence dimension to get per-feature total
+       magnitude across the whole prompt+response, then take the
+       top-K. Each feature's reported ``token_position`` is the
+       position where it fired strongest.
 
-    Construction itself doesn't load weights — that happens on first
-    ``.attribute()`` call so users can ``make_attributor("sae", ...)``
-    cheaply in tests without pulling GBs.
+    Model + SAE are loaded **lazily** on the first ``.attribute()``
+    call and cached on the instance, so making 100 calls only pays
+    the load cost once. CPU-only by default; pass ``device="cuda"``
+    if you have a GPU.
+
+    Construction is cheap. It only fails when the ``loupe[interp]``
+    extra isn't installed.
+
+    Defaults
+    --------
+    ``model="gpt2-small"`` + ``sae="blocks.6.hook_resid_pre"`` from
+    Joseph Bloom's ``gpt2-small-res-jb`` release on Neuronpedia.
+    These are well-studied features at the mid-network residual
+    stream — a sensible default for an end-to-end demo.
+
+    Limitations
+    -----------
+    - Frontier-lab closed models (Claude, GPT-4) have no public SAE,
+      so this backend can't attribute their calls directly. The
+      workflow Loupe is built for: capture an agent that uses a
+      closed model, but run the *same prompt* through an open model
+      below for attribution. The features are not literally the ones
+      that fired in Claude — they're the ones an open model would
+      have used to produce a similar continuation. That correlation
+      is what mech-interp research relies on today.
     """
 
     name = "sae"
 
-    def __init__(self, *, model: str, sae: str, top_k: int = 16) -> None:
+    # Reasonable defaults so `loupe attribute --backend sae` works
+    # immediately on first install without further config.
+    DEFAULT_MODEL = "gpt2-small"
+    DEFAULT_RELEASE = "gpt2-small-res-jb"
+    DEFAULT_SAE = "blocks.6.hook_resid_pre"
+
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        sae: str | None = None,
+        release: str | None = None,
+        top_k: int = 16,
+        device: str = "cpu",
+        max_tokens: int = 256,
+    ) -> None:
         if _try_import_sae_lens() is None:
             raise ImportError(
                 "loupe[interp] extra not installed. Run:\n"
@@ -263,13 +299,49 @@ class SAEAttributor:
                 "to enable real SAE-based attribution (downloads "
                 "transformer-lens + sae-lens + their torch deps)."
             )
-        self.model = model
-        self.sae = sae
+        self.model = model or self.DEFAULT_MODEL
+        self.sae = sae or self.DEFAULT_SAE
+        self.release = release or self.DEFAULT_RELEASE
         self.top_k = top_k
-        # Loaded lazily on first attribute() so import is cheap.
+        self.device = device
+        # We bound the input length so long traces don't OOM us on CPU.
+        self.max_tokens = max_tokens
+        # Lazy: weights downloaded on first .attribute() call, then cached.
         self._loaded = False
         self._hooked_model: Any = None
         self._sae_module: Any = None
+        self._hook_name: str = ""
+
+    def _load(self) -> None:
+        """One-time download + load. Cached on the instance."""
+        if self._loaded:
+            return
+        # Lazy imports keep `import loupe.attribution` dependency-free.
+        from sae_lens import SAE
+        from transformer_lens import HookedTransformer
+
+        self._hooked_model = HookedTransformer.from_pretrained(
+            self.model, device=self.device,
+        )
+        self._sae_module = SAE.from_pretrained(
+            release=self.release,
+            sae_id=self.sae,
+            device=self.device,
+        )
+        # In sae-lens v6+ the hook target lives on cfg.metadata; older
+        # versions had it directly on cfg. Support both.
+        meta = getattr(self._sae_module.cfg, "metadata", None)
+        hook_name = (
+            getattr(meta, "hook_name", None)
+            if meta is not None
+            else getattr(self._sae_module.cfg, "hook_name", None)
+        )
+        if not isinstance(hook_name, str):
+            raise RuntimeError(
+                f"Could not resolve hook_name for SAE {self.release}/{self.sae}"
+            )
+        self._hook_name = hook_name
+        self._loaded = True
 
     def attribute(
         self,
@@ -279,15 +351,68 @@ class SAEAttributor:
         step_id: str,
         trace_id: str,
     ) -> AttributionResult:
-        # See class docstring. Real implementation follows in a separate
-        # PR once we've fixed an open model + a published SAE pair.
-        # Until then this guides users to the mock path.
-        raise NotImplementedError(
-            "SAEAttributor.attribute is staged — the data model + CLI ship "
-            "in this version. The forward-pass + SAE projection lands in "
-            "the next release once an open-model / public-SAE pair is "
-            "chosen. Use MockAttributor in the meantime to exercise "
-            "the pipeline."
+        import time as _time
+
+        import torch  # local: torch is only available via [interp] extra
+
+        self._load()
+        assert self._hooked_model is not None
+        assert self._sae_module is not None
+
+        # Join prompt + response so feature activations cover the full
+        # turn, not just the user side. Cap tokens so a long trace can't
+        # blow up CPU memory.
+        text = (prompt + "\n" + response).strip()
+        if not text:
+            return AttributionResult(
+                model=self.model,
+                sae=self.sae,
+                method="sae-encode-topk",
+                top_features=[],
+                summary="empty prompt+response — nothing to attribute",
+                attributed_at=_time.time(),
+            )
+
+        tokens = self._hooked_model.to_tokens(text)
+        if tokens.shape[1] > self.max_tokens:
+            tokens = tokens[:, : self.max_tokens]
+
+        # Forward pass, only caching the layer the SAE consumes.
+        with torch.no_grad():
+            _, cache = self._hooked_model.run_with_cache(
+                tokens, names_filter=self._hook_name,
+            )
+            hidden = cache[self._hook_name]    # [batch, seq, d_in]
+            feats = self._sae_module.encode(hidden)   # [batch, seq, d_sae]
+            # Aggregate magnitude per feature across all tokens in this turn.
+            totals = feats.sum(dim=(0, 1))    # [d_sae]
+            top = torch.topk(totals, k=min(self.top_k, totals.shape[0]))
+            # Plus, per top feature, the token position where it peaked —
+            # useful diagnostic for downstream cluster analysis.
+            per_token = feats.squeeze(0)   # [seq, d_sae]
+            top_token_positions = per_token[:, top.indices].argmax(dim=0).tolist()
+
+        features = [
+            FeatureActivation(
+                feature_id=int(top.indices[i].item()),
+                activation=round(float(top.values[i].item()), 4),
+                layer=self._hook_name,
+                token_position=int(top_token_positions[i]),
+            )
+            for i in range(top.indices.shape[0])
+        ]
+
+        return AttributionResult(
+            model=self.model,
+            sae=f"{self.release}/{self.sae}",
+            method="sae-encode-topk",
+            top_features=features,
+            summary=(
+                f"{tokens.shape[1]} tokens through {self.model} → "
+                f"{self._sae_module.cfg.d_sae}-dim SAE → top-{self.top_k} "
+                f"features at {self._hook_name}."
+            ),
+            attributed_at=_time.time(),
         )
 
 
@@ -318,10 +443,10 @@ def make_attributor(
             top_k=top_k,
         )
     if backend == "sae":
-        if model is None or sae is None:
-            raise ValueError(
-                "SAE attributor requires explicit --model and --sae names"
-            )
+        # Both model + sae can be omitted; SAEAttributor falls back to
+        # its bundled defaults (gpt2-small + blocks.6.hook_resid_pre from
+        # the gpt2-small-res-jb release). Users override either to point
+        # at a different model/SAE pair.
         return SAEAttributor(model=model, sae=sae, top_k=top_k)
     raise ValueError(
         f"Unknown attribution backend {backend!r}. Use 'mock' or 'sae'."

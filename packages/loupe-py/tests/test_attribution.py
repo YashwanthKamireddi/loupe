@@ -125,12 +125,17 @@ def test_make_attributor_rejects_unknown_backend() -> None:
         make_attributor("nonexistent")
 
 
-def test_make_attributor_sae_requires_model_and_sae() -> None:
-    """The real SAE backend needs explicit model + sae names. The check
-    runs before any heavy import."""
+def test_make_attributor_sae_falls_back_to_defaults() -> None:
+    """The real SAE backend ships with sane defaults (gpt2-small + the
+    layer-6 residual SAE from gpt2-small-res-jb) so `loupe attribute
+    --backend sae` works first-try, no extra config required.
+
+    We only assert the construction succeeds — no weights downloaded
+    until .attribute() is called."""
     pytest.importorskip("sae_lens", reason="real SAE backend opt-in")
-    with pytest.raises(ValueError, match="requires explicit"):
-        make_attributor("sae")
+    a = make_attributor("sae")
+    assert a.model == "gpt2-small"
+    assert a.sae == "blocks.6.hook_resid_pre"
 
 
 # ---------------------------------------------------------------------------
@@ -415,3 +420,98 @@ def test_dashboard_style_css_contains_attribution_styles() -> None:
     css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
     assert ".attr-card" in css
     assert ".attr-bar-fill" in css
+
+
+# ---------------------------------------------------------------------------
+# Real SAE backend — gated by sae-lens + transformer-lens being installed
+# ---------------------------------------------------------------------------
+
+
+def _has_interp_deps() -> bool:
+    try:
+        import sae_lens  # noqa: F401
+        import torch  # noqa: F401
+        import transformer_lens  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+needs_interp = pytest.mark.skipif(
+    not _has_interp_deps(),
+    reason="real SAE backend requires loupe[interp] extra (torch + sae-lens + tl)",
+)
+
+
+@needs_interp
+def test_sae_attributor_constructs_without_loading() -> None:
+    """Construction must NOT pull model weights — only the .attribute() call
+    triggers download. Otherwise tests + CLI startup would block."""
+    from loupe.attribution import SAEAttributor
+
+    a = SAEAttributor(top_k=3)
+    assert a.model == "gpt2-small"
+    assert a.release == "gpt2-small-res-jb"
+    assert a.sae == "blocks.6.hook_resid_pre"
+    assert a._loaded is False
+    assert a._hooked_model is None
+    assert a._sae_module is None
+
+
+@needs_interp
+def test_sae_attributor_real_forward_pass() -> None:
+    """The end-to-end real test: load gpt2-small + a published SAE, attribute
+    a real prompt, assert we got real top-K features with real activations.
+
+    Skipped automatically when [interp] isn't installed; otherwise it
+    exercises the genuine pipeline the v0.2 research artifact rests on.
+    First run downloads ~500MB + 75MB; subsequent runs use the HF cache.
+    """
+    from loupe.attribution import AttributionResult, SAEAttributor
+
+    a = SAEAttributor(top_k=4)
+    r = a.attribute(
+        prompt="The quick brown fox jumps over the lazy dog.",
+        response="It really did.",
+        step_id="t-step",
+        trace_id="t-trace",
+    )
+    assert isinstance(r, AttributionResult)
+    assert r.method == "sae-encode-topk"
+    assert r.model == "gpt2-small"
+    assert "blocks.6.hook_resid_pre" in r.sae
+    assert len(r.top_features) == 4
+    # Real SAE activations are floats; the synthetic mock would produce
+    # exactly 5.0 / 4.1 / 3.2 / 2.3 — guard against accidental swap-back.
+    acts = [f.activation for f in r.top_features]
+    assert all(isinstance(v, float) for v in acts)
+    assert acts == sorted(acts, reverse=True)   # post-sum top-K is ordered
+    # Layer attribute is the actual SAE hook name.
+    assert all(f.layer == "blocks.6.hook_resid_pre" for f in r.top_features)
+
+
+@needs_interp
+def test_sae_attributor_caches_model_between_calls() -> None:
+    """Two .attribute() calls on the same instance must reuse the loaded
+    model + SAE — re-loading on every step would make day-2 use unbearable."""
+    from loupe.attribution import SAEAttributor
+
+    a = SAEAttributor(top_k=2)
+    a.attribute(prompt="p1", response="r1", step_id="s1", trace_id="t1")
+    cached_model = a._hooked_model
+    cached_sae = a._sae_module
+    a.attribute(prompt="p2", response="r2", step_id="s2", trace_id="t2")
+    assert a._hooked_model is cached_model, "model must be cached on instance"
+    assert a._sae_module is cached_sae, "SAE must be cached on instance"
+
+
+@needs_interp
+def test_sae_attributor_handles_empty_text() -> None:
+    """Empty prompt+response shouldn't crash — return an empty result with
+    a useful summary so the CLI can render something instead of throwing."""
+    from loupe.attribution import SAEAttributor
+
+    a = SAEAttributor(top_k=4)
+    r = a.attribute(prompt="", response="", step_id="x", trace_id="x")
+    assert r.top_features == []
+    assert "empty" in (r.summary or "").lower()

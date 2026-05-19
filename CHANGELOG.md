@@ -5,7 +5,69 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Planned for 0.1.0
-- Real SAE backend implementation (forward pass + sae-lens projection)
+- Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
+
+## [0.0.41] — 2026-05-19  ·  **Real SAE attribution — the v0.2 research artifact**
+
+The ``NotImplementedError`` is gone. ``loupe attribute --backend sae``
+now runs a real forward pass through GPT-2 small + Joseph Bloom's
+published layer-6 residual SAE (from the ``gpt2-small-res-jb`` release),
+encodes the hidden states through a 24,576-feature dictionary, and
+returns the top-K features by total post-ReLU activation across the
+prompt+response — with each feature's peak token position.
+
+### What ships
+
+- **End-to-end real SAE pipeline** in ``loupe/attribution.py``:
+  - ``transformer_lens.HookedTransformer`` for the forward pass
+  - ``sae_lens.SAE.from_pretrained`` for the trained dictionary
+  - ``model.run_with_cache(..., names_filter=hook_name)`` so we only
+    materialize the layer the SAE consumes
+  - ``sae.encode(hidden)`` projection, summed across token positions
+  - per-feature peak token position recorded as diagnostic metadata
+- **Lazy loading + caching**: weights download on first ``.attribute()``
+  call, cached on the instance. First call ≈ 7 s on CPU; subsequent
+  calls ≈ 200 ms per ~25-token turn.
+- **Defaults that work out of the box**: ``gpt2-small`` + layer 6
+  residual SAE. ``loupe attribute --backend sae`` requires zero
+  extra flags after ``pip install 'loupe[interp]'``.
+- **API-version tolerant**: handles sae-lens v6+ (hook_name under
+  ``cfg.metadata``) and older versions (hook_name on ``cfg``).
+- **Bounded compute**: ``max_tokens=256`` cap so a runaway agent
+  trace doesn't OOM the user's laptop.
+- **Empty-text safety**: empty prompt+response returns an empty
+  ``AttributionResult`` with an explanatory summary, never throws.
+
+### Honest caveat (documented in the class docstring)
+
+Closed frontier models (Claude, GPT-4) have no public SAE. The
+workflow Loupe is built for: capture an agent that calls a closed
+model, then attribute the *same prompt* through GPT-2 small. The
+features aren't literally what fired inside Claude — they're what
+an open model would use to produce a similar continuation. That
+correlation is what current mech-interp research relies on.
+
+### Tests
+
+- 4 new ``@needs_interp`` tests gated on the optional ``[interp]`` extra
+  being installed:
+  - construction is cheap (no weight load)
+  - real forward pass produces ``sae-encode-topk`` results with
+    activation-sorted features at the actual SAE hook layer
+  - model + SAE are cached between calls (day-2 use stays fast)
+  - empty text doesn't crash
+- **285 Python + 37 TypeScript = 322 tests.** Lint + mypy + tsc clean.
+
+### Try it
+
+```fish
+pip install 'loupe[interp]'                   # one-time, pulls torch + sae-lens
+loupe attribute <trace-id> --backend sae       # ~7 s first call, ~200 ms after
+```
+
+The captured features are persisted into the same annotation store
+as before — refresh the dashboard and the **Circuit attribution**
+panel will show real SAE features with real activation bars.
 
 ## [0.0.40] — 2026-05-19  ·  Attribution: dashboard panel + bulk + cluster
 
