@@ -7,6 +7,59 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.42] — 2026-05-19  ·  Neuronpedia explanations — features get readable names
+
+v0.0.41 returned `#23123` and you had to know what that meant. Now
+`loupe attribute --explain` looks each feature up on the public
+Neuronpedia API and shows you the human-readable interpretation
+alongside the activation:
+
+```
+  step d3a6a09 top features:
+    # 23123  act=420.087  phrases related to legal documents and rulings
+    #   979  act=401.952  phrases related to privatized prison industry…
+    #   316  act=349.759  mentions of percentages or numerical values
+    #  7496  act=329.776  phrases related to warning signs about alcohol
+    # 23111  act=327.353  mentions of specific dates and events
+```
+
+Same data flows into the dashboard's **Circuit attribution** panel —
+the feature row now shows the description in place of the hook layer.
+
+### What ships
+
+- **`loupe/neuronpedia.py`** — small, defensive client for
+  ``https://www.neuronpedia.org/api/feature``:
+  - ``explain(feature_id, hook_name, release)`` — single lookup.
+  - ``explain_many([ids], ...)`` — batched lookup with a small
+    thread pool. A 16-feature attribution finishes in ~1-2s.
+  - Local cache at ``~/.loupe/neuronpedia-cache.json`` — second
+    ``--explain`` run is instant + offline.
+  - ``LOUPE_DISABLE_NEURONPEDIA=1`` opts out entirely.
+- **`FeatureActivation.description`** — new optional field, written
+  by ``--explain`` and rendered by the CLI + dashboard.
+- **`--explain` flag on ``loupe attribute``** — single-trace and
+  ``--all`` modes both support it. Lookups are batched per
+  (hook_name, release) cluster so one big attribution doesn't fire
+  hundreds of sequential requests.
+
+### Honest properties
+- Best-effort everywhere. Network down → ``description=None``,
+  attribution result still saves with the raw feature ids.
+- Recognized SAE releases today: ``gpt2-small-res-jb`` and
+  ``gpt2-small-res-jb-feature-splitting``. Other releases return
+  ``None`` from the Neuronpedia lookup and the CLI falls back to
+  showing the hook layer.
+
+### Tests
+- 17 new tests covering: hook→layer mapping (canonical, feature-
+  splitting, unknown release, malformed hook), model lookup, cache
+  round-trip via disk, explain() with HTTP mock + cache hit + HTTP
+  error + 404 + unknown-release short-circuit + disabled-env,
+  explain_many() batch behavior + empty input, FeatureActivation
+  description round-trips through JSON.
+- **302 Python + 37 TypeScript = 339 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.41] — 2026-05-19  ·  **Real SAE attribution — the v0.2 research artifact**
 
 The ``NotImplementedError`` is gone. ``loupe attribute --backend sae``

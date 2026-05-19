@@ -549,6 +549,12 @@ def attribute(
         "--annotator",
         help="Annotator id stored alongside the attribution.",
     ),
+    explain: bool = typer.Option(
+        False, "--explain",
+        help="Look up each top feature's interpretation on Neuronpedia. "
+             "Adds a description field to every FeatureActivation. Cached "
+             "locally so a second --explain run is instant + offline.",
+    ),
 ) -> None:
     """Compute circuit attribution for llm-call steps.
 
@@ -621,6 +627,9 @@ def attribute(
                 )
                 continue
 
+            if explain:
+                results = _attach_explanations(results)
+
             existing = {a.step_id: a for a in store.load(path.stem)}
             for step_id, result in results:
                 if step_id in existing:
@@ -668,13 +677,66 @@ def attribute(
             console.print()
             console.print(Text(f"  step {first_id[:12]} top features:", style=DIM))
             for f in feats:
-                console.print(
+                line = (
                     Text("    ", style=DIM)
                     + Text(f"#{f.feature_id:>6}", style=AMBER)
                     + Text(f"  act={f.activation:.3f}", style=INK)
-                    + Text(f"  {f.layer}", style=DIM)
                 )
+                if f.description:
+                    line += Text(f"  {f.description}", style=INK)
+                else:
+                    line += Text(f"  {f.layer}", style=DIM)
+                console.print(line)
     console.print()
+
+
+def _attach_explanations(
+    results: list[tuple[str, Any]],
+) -> list[tuple[str, Any]]:
+    """Bulk-fetch Neuronpedia explanations for every (feature_id, layer,
+    release) tuple across all results, then attach to FeatureActivations.
+
+    Uses one parallel lookup per (hook_name, release) cluster so a 20-step
+    attribution doesn't fire 20 sequential round-trips. Best-effort:
+    every failure path produces ``description=None`` and the original
+    activation magnitude survives intact.
+    """
+    from dataclasses import replace
+
+    from loupe.attribution import AttributionResult
+    from loupe.neuronpedia import explain_many
+
+    # Cluster features by (hook_name, release) so a batched lookup makes
+    # sense — most attributions all share the same SAE.
+    clusters: dict[tuple[str, str], set[int]] = {}
+    for _step_id, r in results:
+        if not isinstance(r, AttributionResult):
+            continue
+        for f in r.top_features:
+            clusters.setdefault((f.layer, r.sae), set()).add(f.feature_id)
+
+    explanations: dict[tuple[str, str, int], str | None] = {}
+    for (layer, release), feature_ids in clusters.items():
+        lookup = explain_many(
+            list(feature_ids), hook_name=layer, release=release,
+        )
+        for fid, desc in lookup.items():
+            explanations[(layer, release, fid)] = desc
+
+    new_results: list[tuple[str, Any]] = []
+    for step_id, r in results:
+        if not isinstance(r, AttributionResult):
+            new_results.append((step_id, r))
+            continue
+        annotated = [
+            replace(
+                f,
+                description=explanations.get((f.layer, r.sae, f.feature_id)),
+            )
+            for f in r.top_features
+        ]
+        new_results.append((step_id, replace(r, top_features=annotated)))
+    return new_results
 
 
 # ----------------------------------------------------------------------------

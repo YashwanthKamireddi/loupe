@@ -431,13 +431,20 @@ function renderAttributionCard(attr) {
 
   const rows = features.map((f) => {
     const pct = Math.max(0, Math.min(100, (Number(f.activation) / maxAct) * 100));
+    const desc = f.description ? escapeHtml(f.description) : "";
     const layerLabel = f.layer ? escapeHtml(f.layer) : "";
+    // When we have a Neuronpedia explanation we surface it instead of the
+    // raw layer name — humans can read "phrases related to legal rulings"
+    // but no one's brain matches blocks.6.hook_resid_pre to anything useful.
+    const trailing = desc
+      ? `<span class="attr-desc">${desc}</span>`
+      : `<span class="attr-layer">${layerLabel}</span>`;
     return `
-      <li class="attr-row">
+      <li class="attr-row${desc ? " has-desc" : ""}">
         <span class="attr-id">#${escapeHtml(String(f.feature_id))}</span>
         <span class="attr-bar"><span class="attr-bar-fill" style="width:${pct.toFixed(1)}%"></span></span>
         <span class="attr-act">${Number(f.activation).toFixed(3)}</span>
-        <span class="attr-layer">${layerLabel}</span>
+        ${trailing}
       </li>
     `;
   }).join("");

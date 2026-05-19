@@ -66,12 +66,16 @@ class FeatureActivation:
     ``activation`` is the post-ReLU magnitude (always >= 0 for sparse SAEs).
     ``layer`` and ``token_position`` are diagnostic metadata for downstream
     cluster analysis.
+    ``description`` is the human-readable interpretation from Neuronpedia
+    (or any other explanation source), attached by ``loupe attribute
+    --explain``. ``None`` when no interpretation is available.
     """
 
     feature_id: int
     activation: float
     layer: str
     token_position: int | None = None
+    description: str | None = None
 
 
 @dataclass

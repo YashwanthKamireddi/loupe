@@ -1018,6 +1018,17 @@ input, select, textarea {
   color: var(--ink-3);
   font-size: var(--t-xs);
 }
+.attr-desc {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+    system-ui, sans-serif;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+.attr-row.has-desc {
+  grid-template-columns: 72px 1fr 64px 2fr;
+}
 
 /* ----- annotation card ----- */
 .annot-card {
