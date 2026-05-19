@@ -10,7 +10,7 @@ Open-source forensics + interpretability for LLM agents. Record every step, repl
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](#)
 [![Node](https://img.shields.io/badge/node-20%20%7C%2022%20%7C%2024-brightgreen.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-218%20passing-success.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-339%20passing-success.svg)](#)
 
 </div>
 
@@ -53,25 +53,40 @@ Or, all at once: `pip install 'loupe[ui,universal,langgraph,anthropic,openai,pyd
 ## What you can do (every command)
 
 ```text
-loupe                             Welcome screen + quickstart
-loupe start                       Open the dashboard (auto-opens browser)
-loupe init <name>                 Scaffold a Loupe-instrumented starter project
-loupe ui [--port 7860]            Launch the local forensic dashboard
-loupe list                        List all captured traces in a compact table
-loupe show <trace-id>             Print one trace step-by-step in the terminal
-loupe stats                       Aggregate overview: counts + framework + failure histograms
-loupe diff <a> <b>                Side-by-side step alignment of two traces (A/B comparisons)
-loupe tag <trace> <step> <cat>    Mark a failing step for LoupeBench
-loupe untag <trace> <step>        Remove a tag
-loupe annotations <trace>         List tags on one trace
-loupe export [--out FILE]         Bundle annotated failures into LoupeBench JSONL
-loupe report <trace>              Render a shareable markdown case file (--out FILE)
-loupe report <trace> --html       Render a *standalone single-file HTML viewer* (no CDN, no network)
-loupe verify <trace> | --all      Validate trace(s) against docs/loupe-trace.schema.json
-loupe doctor                      Diagnose your install + every integration's status
-loupe purge --older-than 7d       Free disk space — delete old traces (dry-run unless --yes)
-loupe providers                   List all 49 auto-detected LLM provider hosts
-loupe version                     Print Loupe version
+Capture & inspect
+  loupe                                     Welcome screen + quickstart
+  loupe init <name>                         Scaffold a Loupe-instrumented Gemini agent
+  loupe start                               Open the dashboard (auto-opens browser)
+  loupe ui [--port 7860]                    Launch the local forensic dashboard
+  loupe list                                List all captured traces (adapts to terminal width)
+  loupe show <trace-id>                     Print one trace step-by-step in the terminal
+  loupe diff <a> <b>                        Side-by-side step alignment of two traces
+
+Aggregate & tag
+  loupe stats                               Total counts, framework + failure histograms
+  loupe tag <trace> <step> <category>       Mark a failing step for LoupeBench
+  loupe untag <trace> <step>                Remove a tag
+  loupe annotations <trace>                 List tags on one trace
+  loupe export [--out FILE]                 Bundle annotated failures into LoupeBench JSONL
+
+Mechanistic interpretability  (v0.2)
+  loupe attribute <trace> [--backend mock|sae] [--explain] [--top-k 8]
+                                            Compute circuit attribution per llm-call step
+  loupe attribute --all [--force] [--explain]
+                                            Bulk attribute every captured trace
+  loupe cluster [--category hallucination]  Find SAE features that recur across failures
+
+Indexing & lifecycle
+  loupe index info                          DuckDB index health + row counts
+  loupe index rebuild                       Drop + re-walk JSONL files from disk
+  loupe purge --older-than 7d [--yes]       Delete old traces (dry-run unless --yes)
+
+Quality & integration
+  loupe verify <trace> | --all              Validate trace(s) against the canonical schema
+  loupe doctor [--smoke]                    Diagnose install + integrations; --smoke = full lifecycle
+  loupe report <trace> [--html]             Shareable markdown / single-file HTML case file
+  loupe providers                           List all 49 auto-detected LLM provider hosts
+  loupe version                             Print Loupe version
 ```
 
 ## 60-second quickstart
@@ -95,6 +110,52 @@ The browser opens at `http://localhost:7860`. You'll see the live SSE
 indicator pulsing green and one captured trace in the sidebar. Click it
 to inspect every step, the underlying HTTP request, and the model's
 response. Run the agent again — new traces stream in without a refresh.
+
+## Circuit attribution — see *which* features fired
+
+Tagging a step as "hallucination" tells you **what** went wrong.
+``loupe attribute --backend sae`` tells you **why** at the level of
+mechanism: which SAE features in the model fired during this turn.
+
+```fish
+pip install 'loupe[interp]'                           # torch + transformer-lens + sae-lens
+loupe attribute <trace-id> --backend sae --explain    # ~7s first time, then ~200ms / step
+```
+
+Output:
+
+```
+  step d3a6a09 top features:
+    # 23123  act=420.087  phrases related to legal documents and rulings
+    #   979  act=401.952  phrases related to privatized prison industry…
+    #   316  act=349.759  mentions of percentages or numerical values
+    #  7496  act=329.776  phrases related to warning signs about alcohol
+    # 23111  act=327.353  mentions of specific dates and events
+```
+
+Real GPT-2 small features from Joseph Bloom's layer-6 residual SAE,
+explanations fetched from [Neuronpedia](https://neuronpedia.org).
+
+Cluster across many tagged failures:
+
+```fish
+loupe cluster --category hallucination
+loupe cluster --category loop --top-k 25
+```
+
+You get a frequency table (which features recur across failures of
+this category) **and** a distinctiveness table (features
+over-represented here vs every other category, scored by smoothed
+log-ratio). That's the analytical primitive of the LoupeBench
+research workflow.
+
+> **Honest caveat:** closed frontier models (Claude, GPT-4) don't
+> publish their SAEs. The workflow Loupe is built for: capture an
+> agent run that uses a closed model, then attribute the *same
+> prompt* through an open model that does. The features aren't
+> literally what fired inside Claude — they're what an open model
+> would use to produce a similar continuation. That correlation is
+> what current mech-interp research relies on.
 
 ## Instrument your own agent — pick your stack
 
@@ -195,44 +256,55 @@ Both Python and TS write the **same JSONL** to `~/.loupe/traces/` — and the HT
 
 | Piece | What it is | Status |
 |---|---|---|
-| `loupe` Python SDK | `@trace` decorator + sync/async + JSONL store | ✅ v0.0.1 |
-| LangChain / LangGraph integration | `LoupeCallbackHandler` for any LangChain runnable | ✅ v0.0.2 |
-| Local web dashboard | FastAPI + forensic-dossier SPA — `loupe ui` | ✅ v0.0.3 |
-| Annotation layer + `loupe tag/export` | Turn captured failures into LoupeBench JSONL | ✅ v0.0.4 |
-| Anthropic + OpenAI direct integration | `patch()` once, all SDK calls auto-traced | ✅ v0.0.4 |
-| **TypeScript SDK (`@loupe/sdk`)** | **Same `trace()` API for Vercel AI SDK / Node — same wire format, same dashboard** | ✅ v0.0.4 |
-| SAE-based circuit attribution | Surface which neural circuits fired on failure | 🚧 v0.2 |
-| Loupe Cloud (hosted) | Share traces with your team, dashboards online | 🚧 v0.2 |
+| `loupe` Python SDK | `@trace` decorator + sync/async + JSONL store | ✅ |
+| LangChain / LangGraph integration | `LoupeCallbackHandler` for any LangChain runnable | ✅ |
+| Local web dashboard | FastAPI + SSE + forensic-dossier SPA — `loupe ui` | ✅ |
+| Annotation layer + `loupe tag/export` | Turn captured failures into LoupeBench JSONL | ✅ |
+| Anthropic / OpenAI / Google direct integration | Auto-traced via `patch_all()` + universal-httpx | ✅ |
+| **TypeScript SDK (`@loupe/sdk`)** | **Same `trace()` API for Vercel AI SDK / Node — same wire format, same dashboard** | ✅ |
+| **DuckDB index** | Sub-millisecond `loupe list / stats` at any scale | ✅ v0.0.38 |
+| **Real SAE circuit attribution** | `loupe attribute --backend sae` — GPT-2 small + sae-lens forward pass | ✅ v0.0.41 |
+| **Neuronpedia explanations** | `--explain` turns feature ids into readable concepts | ✅ v0.0.42 |
+| **`loupe cluster`** | Find SAE features that recur across tagged failures | ✅ v0.0.40 |
+| Loupe Cloud (hosted) | Share traces with your team, dashboards online | 🚧 v0.3 |
 
 ## Two languages, one dashboard
 
 Python and TypeScript SDKs write the **identical JSONL wire format** to `~/.loupe/traces/`. The Python `loupe ui` dashboard reads both transparently — your Vercel AI SDK trace from a Next.js app and your LangGraph trace from a Python notebook appear side-by-side.
-
-## CLI
-
-```text
-loupe list                        list traces (newest first, with tag counts)
-loupe show <trace-id>             print step-by-step content of one trace
-loupe ui [--port 7860]            launch local dashboard at http://localhost:7860
-loupe tag <trace> <step> <cat>    mark a step as a benchmark-worthy failure
-loupe untag <trace> <step>        remove a tag
-loupe annotations <trace>         list tags on one trace
-loupe export [--out FILE]         bundle annotated failures into LoupeBench JSONL
-loupe doctor                      diagnose your install
-loupe version                     print Loupe version
-```
 
 ## The magic moment
 
 Your agent fails. You open Loupe. You see:
 
 ```
-Step 4 → activated circuit `unguarded-delete`
-This circuit fires in 41% of all destructive failures.
-Suggested mitigation: add a path-prefix guard before any rm.
+Step 4   llm-call    anthropic:claude-sonnet-4-6        2,041 ms    FAILED
+   prompt:    "Search the codebase for unguarded rm calls..."
+   response:  (model returned a destructive bash command)
+   error:     subprocess returned exit 1, agent looped
 ```
 
-(Circuit-level attribution arrives in v0.2 with SAE integration. Today you'll see the failing step in the timeline, the error stack, inputs/outputs, and tag it for the benchmark.)
+You click **Tag this failure** → category `unguarded-delete`,
+notes "model invented a path it shouldn't have access to". Then:
+
+```fish
+loupe attribute --all --backend sae --explain
+loupe cluster --category unguarded-delete
+```
+
+```
+  distinctive features  (vs 47 other-category annotation(s))
+   feature_id     in    out   score
+       #11842      8     1    +2.07     mentions of file system paths
+        #3221      7     2    +1.45     destructive verbs (delete, remove)
+       #19044      5     0    +1.39     phrases related to operations without confirmation
+```
+
+Three features, real, mechanistic, reproducible. Cluster across 100
+failures and you have a publishable circuit characterization.
+
+The interpretability work today is staged with a Mock backend so you
+can validate the pipeline (`loupe attribute --backend mock`); the
+real SAE backend lands when you install `loupe[interp]`.
 
 ## LoupeBench — public dataset
 

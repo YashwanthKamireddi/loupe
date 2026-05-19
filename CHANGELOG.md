@@ -7,6 +7,34 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.43] — 2026-05-19  ·  README refresh for v0.2
+
+The README front door was six versions stale. New visitors saw a v0.0.32-era
+quickstart and a "what's in the box" table missing every v0.2 feature.
+
+### Updated
+
+- Test count badge bumped from 218 → 339.
+- Full command reference grouped by purpose:
+  *Capture & inspect · Aggregate & tag · Mechanistic interpretability ·
+  Indexing & lifecycle · Quality & integration*.
+- New top-level section **"Circuit attribution — see *which* features
+  fired"** with real example output (the legal-rulings / prison /
+  percentages / alcohol / dates features from gpt2-small) and the
+  honest cross-model caveat documented in plain English.
+- `loupe cluster` walkthrough including the distinctiveness-table
+  example (the research-paper artifact's output).
+- "What's in the box" table updated:
+  * DuckDB index (v0.0.38)
+  * Real SAE attribution (v0.0.41)
+  * Neuronpedia explanations (v0.0.42)
+  * Cluster analysis (v0.0.40)
+- "The magic moment" rewritten with the real workflow:
+  failing-step → tag → attribute → cluster → reproducible
+  feature characterization.
+
+No code changes. Documentation pass only.
+
 ## [0.0.42] — 2026-05-19  ·  Neuronpedia explanations — features get readable names
 
 v0.0.41 returned `#23123` and you had to know what that meant. Now
