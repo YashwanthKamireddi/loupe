@@ -7,6 +7,56 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.44] — 2026-05-19  ·  `loupe replay` — re-run any captured agent run
+
+The agent-forensics use case asked: *"Did the bug get fixed?"*
+``loupe replay <trace-id>`` answers it.
+
+### What ships
+
+```fish
+loupe replay <trace-id>                       # same prompt, same model
+loupe replay <trace-id> --model gemini-2.5-pro   # same prompt, newer model
+loupe replay <trace-id> --prompt "different"   # different prompt, same model
+```
+
+For a captured agent run, replay:
+
+1. Extracts the original prompt — from the ``plan`` step's
+   ``outputs.q`` first (loupe-init scaffold pattern), falling back to
+   the first ``llm-call`` step's ``inputs.contents`` /
+   ``inputs.messages``.
+2. Extracts the original model — from ``inputs.model``, or parsed out
+   of the step ``name`` (``"gemini:gemini-2.5-flash"``) when
+   universal-httpx captured a body that lacked the field (Gemini's
+   case — its model lives in the URL).
+3. Re-invokes the same provider+model.
+4. Captures the new run as a separate trace with name
+   ``replay-of-<original-name>``.
+5. Prints both trace ids and suggests
+   ``loupe diff <old> <new>`` for the comparison.
+
+### Supported frameworks today
+
+- ``gemini`` (the default for the ``loupe init`` scaffold).
+
+Anthropic + OpenAI replay are coming once the per-provider
+input-extraction edge cases are validated.
+
+### Error paths (all return clean exit 1, no traceback)
+
+- Unknown trace id
+- Trace from an unsupported framework
+- Missing ``GEMINI_API_KEY`` in the shell
+- API failure (the failed call is still captured as a new trace)
+
+### Tests
+
+- 6 new tests covering the input-extraction helper (plan-step path,
+  fallback to llm-call inputs, model parse-from-name, unrecognized
+  trace) + CLI error paths (unknown trace, unknown framework).
+- **275 Python + 37 TypeScript = 312 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.43] — 2026-05-19  ·  README refresh for v0.2
 
 The README front door was six versions stale. New visitors saw a v0.0.32-era

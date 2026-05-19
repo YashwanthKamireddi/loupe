@@ -522,6 +522,142 @@ def test_parse_duration_accepts_all_suffixes() -> None:
     assert _parse_duration("0d") == 0.0
 
 
+# ---------------------------------------------------------------------------
+# loupe replay — _extract_replay_inputs helper
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(path: Path, lines: list[dict]) -> None:
+    import json as _json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(_json.dumps(line) for line in lines) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_replay_extracts_prompt_from_plan_step(
+    loupe_home: Path,
+) -> None:
+    """The loupe-init scaffold puts the question in plan.outputs.q —
+    replay must pick it up there first."""
+    from loupe.cli import _extract_replay_inputs
+
+    p = loupe_home / "traces" / "alpha000000.jsonl"
+    _write_jsonl(p, [
+        {"_type": "trace", "trace_id": "alpha000000", "name": "x",
+         "framework": "gemini", "started_at": 1.0, "ended_at": 2.0},
+        {"_type": "step", "step_id": "s1", "kind": "plan",
+         "name": "compose prompt", "started_at": 1.0, "ended_at": 1.1,
+         "outputs": {"q": "what is the capital of France?"}},
+        {"_type": "step", "step_id": "s2", "kind": "llm-call",
+         "name": "gemini:gemini-2.5-flash", "started_at": 1.1, "ended_at": 1.9,
+         "inputs": {"provider": "gemini", "model": "gemini-2.5-flash"},
+         "outputs": {"text": "Paris"}},
+    ])
+    header, prompt, model, framework = _extract_replay_inputs(p)
+    assert header is not None and header["trace_id"] == "alpha000000"
+    assert prompt == "what is the capital of France?"
+    assert model == "gemini-2.5-flash"
+    assert framework == "gemini"
+
+
+def test_replay_falls_back_to_llm_call_inputs_contents(
+    loupe_home: Path,
+) -> None:
+    """If there's no plan step, replay must reach into the llm-call inputs."""
+    from loupe.cli import _extract_replay_inputs
+
+    p = loupe_home / "traces" / "beta00000000.jsonl"
+    _write_jsonl(p, [
+        {"_type": "trace", "trace_id": "beta00000000", "name": "y",
+         "framework": "gemini", "started_at": 1.0, "ended_at": 2.0},
+        {"_type": "step", "step_id": "s1", "kind": "llm-call",
+         "name": "gemini:gemini-2.0-flash", "started_at": 1.0, "ended_at": 1.5,
+         "inputs": {"contents": "hello world", "model": "gemini-2.0-flash"},
+         "outputs": {"text": "hi"}},
+    ])
+    _h, prompt, model, _fw = _extract_replay_inputs(p)
+    assert prompt == "hello world"
+    assert model == "gemini-2.0-flash"
+
+
+def test_replay_parses_model_from_step_name_when_inputs_lack_it(
+    loupe_home: Path,
+) -> None:
+    """When universal-httpx captured a step but the body had no 'model'
+    field (Gemini's case), the model lives in the step's name as
+    'gemini:gemini-X.Y-flash'. Replay must parse it out."""
+    from loupe.cli import _extract_replay_inputs
+
+    p = loupe_home / "traces" / "gamma0000000.jsonl"
+    _write_jsonl(p, [
+        {"_type": "trace", "trace_id": "gamma0000000", "name": "z",
+         "framework": "gemini", "started_at": 1.0, "ended_at": 2.0},
+        {"_type": "step", "step_id": "s1", "kind": "plan",
+         "name": "compose prompt", "started_at": 1.0, "ended_at": 1.1,
+         "outputs": {"q": "test"}},
+        {"_type": "step", "step_id": "s2", "kind": "llm-call",
+         "name": "gemini:gemini-2.5-pro", "started_at": 1.1, "ended_at": 1.9,
+         "inputs": {"provider": "gemini"},   # no model key
+         "outputs": {"text": "ok"}},
+    ])
+    _h, _p, model, _fw = _extract_replay_inputs(p)
+    assert model == "gemini-2.5-pro"
+
+
+def test_replay_returns_empty_strings_when_trace_unrecognized(
+    loupe_home: Path,
+) -> None:
+    """Defensive: a trace with no plan + no llm-call should not crash —
+    returns empty prompt + model so the CLI can ask for --prompt overrides."""
+    from loupe.cli import _extract_replay_inputs
+
+    p = loupe_home / "traces" / "empty0000000.jsonl"
+    _write_jsonl(p, [
+        {"_type": "trace", "trace_id": "empty0000000", "name": "empty",
+         "framework": "gemini", "started_at": 1.0, "ended_at": 2.0},
+        {"_type": "step", "step_id": "s1", "kind": "io",
+         "name": "weird", "started_at": 1.0, "ended_at": 1.1},
+    ])
+    header, prompt, model, framework = _extract_replay_inputs(p)
+    assert header is not None
+    assert prompt == ""
+    assert model == ""
+    assert framework == "gemini"
+
+
+def test_replay_cli_unknown_trace_exits_one(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    res = runner.invoke(app, ["replay", "deadbeefdead"])
+    assert res.exit_code == 1
+
+
+def test_replay_cli_unknown_framework_errors_clean(
+    runner: CliRunner, loupe_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A trace from a non-Gemini framework today gets a clear error
+    instead of a Python traceback."""
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy")    # avoid the key-check branch
+    p = loupe_home / "traces" / "alpha111111111.jsonl"
+    _write_jsonl(p, [
+        {"_type": "trace", "trace_id": "alpha111111111", "name": "x",
+         "framework": "langgraph", "started_at": 1.0, "ended_at": 2.0},
+        {"_type": "step", "step_id": "s1", "kind": "plan",
+         "name": "plan", "started_at": 1.0, "ended_at": 1.1,
+         "outputs": {"q": "hello"}},
+        {"_type": "step", "step_id": "s2", "kind": "llm-call",
+         "name": "anthropic:claude-haiku", "started_at": 1.1, "ended_at": 1.9,
+         "inputs": {"model": "claude-haiku"}, "outputs": {"text": "hi"}},
+    ])
+    res = runner.invoke(app, ["replay", "alpha1111"])
+    assert res.exit_code == 1
+    assert "not implemented yet" in res.output
+    assert "Traceback" not in res.output
+
+
 def test_parse_duration_rejects_garbage() -> None:
     from loupe.cli import _parse_duration
 

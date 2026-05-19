@@ -1708,6 +1708,230 @@ def cluster(
     render_padded(*blocks)
 
 
+@app.command("replay")
+def replay(
+    trace_id: str,
+    prompt: str = typer.Option(
+        "", "--prompt", "-p",
+        help="Override the prompt. Default: extract from the original trace.",
+    ),
+    model: str = typer.Option(
+        "", "--model",
+        help="Override the model. Default: use the one from the original trace.",
+    ),
+) -> None:
+    """Re-run an agent run captured earlier.
+
+    Useful for:
+      * **Reproducibility**: same prompt, same model — did the bug repeat?
+      * **Model upgrades**: same prompt, newer model — did the bug get fixed?
+      * **Prompt variants**: edit ``--prompt``, hold model constant.
+
+    The result is captured as a NEW Loupe trace. The CLI prints both
+    trace ids so you can run ``loupe diff <old> <new>`` immediately.
+
+    Supported providers today: ``gemini`` (free tier, default for the
+    ``loupe init`` scaffold). Anthropic + OpenAI replay are coming once
+    we've validated the per-provider input-extraction edge cases.
+    """
+    import os
+
+    from loupe import record_step
+    from loupe import trace as trace_decorator
+    from loupe.integrations import patch_all
+
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+
+    header, prompt_from_trace, model_from_trace, framework = _extract_replay_inputs(path)
+    if header is None:
+        console.print(Text("  ✗ trace has no header.", style=RED))
+        raise typer.Exit(code=1)
+
+    final_prompt = prompt or prompt_from_trace
+    final_model = model or model_from_trace
+
+    if not final_prompt:
+        console.print(
+            Text("  ✗ could not extract a prompt from the trace.", style=RED)
+        )
+        console.print(
+            Text("  Pass --prompt to override.", style=DIM)
+        )
+        raise typer.Exit(code=1)
+    if not final_model:
+        console.print(
+            Text("  ✗ could not extract a model from the trace.", style=RED)
+        )
+        console.print(Text("  Pass --model to override.", style=DIM))
+        raise typer.Exit(code=1)
+
+    # Provider routing — extend as we add more replay backends.
+    if framework not in ("gemini", "google"):
+        console.print(
+            Text(
+                f"  ✗ replay backend for framework {framework!r} not implemented yet. "
+                "Today: gemini. PRs welcome.",
+                style=RED,
+            )
+        )
+        raise typer.Exit(code=1)
+
+    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+        console.print(
+            Text("  ✗ GEMINI_API_KEY is not set in this shell.", style=RED)
+        )
+        console.print(
+            Text("  Get a free key at https://aistudio.google.com/apikey",
+                 style=DIM)
+        )
+        raise typer.Exit(code=1)
+
+    patch_all()
+    original_name = header.get("name", "agent")
+
+    @trace_decorator(name=f"replay-of-{original_name}", framework="gemini")
+    def _replay_turn() -> str:
+        from google import genai
+
+        record_step(
+            "plan", "replay prompt",
+            outputs={
+                "q": final_prompt[:200],
+                "source_trace": path.stem,
+                "model": final_model,
+            },
+        )
+        client = genai.Client()
+        response = client.models.generate_content(
+            model=final_model, contents=final_prompt,
+        )
+        text = response.text or "(no text)"
+        usage = getattr(response, "usage_metadata", None)
+        tokens: dict[str, Any] = {}
+        if usage is not None:
+            tokens["input"] = getattr(usage, "prompt_token_count", None)
+            tokens["output"] = getattr(usage, "candidates_token_count", None)
+        record_step(
+            "final", "got reply",
+            outputs={"text": text[:300], **tokens},
+        )
+        return text
+
+    console.print()
+    console.print(
+        Text("  ◉ replaying ", style=AMBER)
+        + Text(f"{path.stem[:12]}", style=INK)
+        + Text(f"  ·  model={final_model}", style=DIM)
+    )
+    console.print(
+        Text("    prompt: ", style=DIM)
+        + Text(final_prompt[:120], style=INK)
+        + (Text(" …", style=DIM) if len(final_prompt) > 120 else Text())
+    )
+    console.print()
+
+    try:
+        with spinner(f"Calling {final_model}"):
+            answer: str = _replay_turn()
+    except Exception as exc:  # noqa: BLE001 — surface the API error verbatim
+        console.print(Text(f"  ✗ replay failed: {exc}", style=RED))
+        console.print(
+            Text("  (the failure was still captured — open loupe ui to see it)",
+                 style=DIM)
+        )
+        raise typer.Exit(code=1) from None
+
+    # Find the new trace id by diffing the traces dir snapshot.
+    traces_dir = _default_dir() / "traces"
+    candidates = sorted(
+        traces_dir.glob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    new_id = candidates[0].stem if candidates else "?"
+
+    console.print(
+        Text("  ✓ replay captured ", style=GREEN)
+        + Text(new_id[:12], style=AMBER)
+    )
+    console.print(
+        Text("    answer: ", style=DIM)
+        + Text(answer[:160], style=INK)
+        + (Text(" …", style=DIM) if len(answer) > 160 else Text())
+    )
+    console.print()
+    console.print(
+        hint(f"loupe diff {path.stem[:12]} {new_id[:12]}    # compare originals")
+    )
+    console.print(
+        hint(f"loupe show {new_id[:12]}                    # inspect the replay")
+    )
+    console.print()
+
+
+def _extract_replay_inputs(
+    path: Path,
+) -> tuple[dict | None, str, str, str]:
+    """Read a trace and return (header, prompt, model, framework).
+
+    Best-effort extraction. The prompt is sourced from, in order:
+      1. The first ``plan``-kind step's ``outputs.q`` (loupe init scaffold).
+      2. The first ``llm-call``-kind step's ``inputs.contents`` (Gemini).
+      3. The first ``llm-call`` step's ``inputs.messages`` joined as text.
+
+    The model is sourced from the first ``llm-call`` step's ``inputs.model``
+    or, failing that, parsed out of its ``name`` (``"gemini:gemini-2.5-flash"``).
+    """
+    import json as _json
+
+    header: dict | None = None
+    prompt = ""
+    model = ""
+    framework = ""
+
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = _json.loads(line)
+            kind = obj.pop("_type", None)
+            if kind == "trace":
+                header = obj
+                framework = header.get("framework") or ""
+                continue
+            if kind != "step":
+                continue
+
+            if obj.get("kind") == "plan" and not prompt:
+                q = (obj.get("outputs") or {}).get("q")
+                if isinstance(q, str) and q.strip():
+                    prompt = q
+
+            if obj.get("kind") == "llm-call":
+                ins = obj.get("inputs") or {}
+                if not prompt:
+                    if isinstance(ins.get("contents"), str):
+                        prompt = ins["contents"]
+                    elif isinstance(ins.get("messages"), list):
+                        bits: list[str] = []
+                        for m in ins["messages"]:
+                            if isinstance(m, dict):
+                                c = m.get("content")
+                                if isinstance(c, str):
+                                    bits.append(c)
+                        prompt = "\n".join(bits)
+                if not model:
+                    if isinstance(ins.get("model"), str):
+                        model = ins["model"]
+                    elif isinstance(obj.get("name"), str) and ":" in obj["name"]:
+                        model = obj["name"].split(":", 1)[1]
+
+    return header, prompt, model, framework
+
+
 @app.command("version")
 def version() -> None:
     """Print Loupe version."""
