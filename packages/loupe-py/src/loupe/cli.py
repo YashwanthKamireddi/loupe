@@ -504,6 +504,132 @@ def annotations_cmd(trace_id: str) -> None:
 
 
 # ----------------------------------------------------------------------------
+# Circuit attribution
+# ----------------------------------------------------------------------------
+
+
+@app.command("attribute")
+def attribute(
+    trace_id: str,
+    backend: str = typer.Option(
+        "mock",
+        "--backend",
+        help="Attributor backend: 'mock' (default, no deps) or 'sae' "
+             "(requires loupe[interp] extra).",
+    ),
+    model: str | None = typer.Option(
+        None, "--model",
+        help="Model name for the SAE backend (e.g. gpt2-small).",
+    ),
+    sae: str | None = typer.Option(
+        None, "--sae",
+        help="SAE identifier for the SAE backend.",
+    ),
+    top_k: int = typer.Option(
+        8, "--top-k",
+        help="Number of top features to keep per step.",
+    ),
+    only_failing: bool = typer.Option(
+        False, "--only-failing",
+        help="Skip steps that completed without an error.",
+    ),
+    annotator: str = typer.Option(
+        "loupe-attribute",
+        "--annotator",
+        help="Annotator id stored alongside the attribution.",
+    ),
+) -> None:
+    """Compute circuit attribution for every llm-call step in a trace.
+
+    Results are stored in each step's annotation under
+    ``circuit_attribution`` — alongside any human tags. Existing
+    annotations are updated in place; existing tags + notes are
+    preserved.
+
+    Backends:
+      - ``mock``: deterministic synthetic features, no deps. Use this
+        to validate the plumbing end-to-end.
+      - ``sae``: real SAE attribution. Requires ``pip install
+        'loupe[interp]'`` and a model/SAE pair.
+    """
+    from loupe.attribution import attribute_trace, make_attributor
+
+    path = _find_trace(trace_id)
+    if path is None:
+        raise typer.Exit(code=1)
+
+    try:
+        attributor = make_attributor(
+            backend, model=model, sae=sae, top_k=top_k,
+        )
+    except (ValueError, ImportError) as exc:
+        console.print(Text(f"  ✗ {exc}", style=RED))
+        raise typer.Exit(code=1) from None
+
+    with spinner(f"Attributing via {attributor.name} ({attributor.model})"):
+        try:
+            results = attribute_trace(
+                path, attributor, only_failing=only_failing,
+            )
+        except NotImplementedError as exc:
+            console.print(Text(f"  ✗ {exc}", style=RED))
+            raise typer.Exit(code=1) from None
+        except Exception as exc:  # noqa: BLE001
+            console.print(Text(f"  ✗ attribution failed: {exc}", style=RED))
+            raise typer.Exit(code=1) from None
+
+    if not results:
+        console.print(
+            Text("  No llm-call steps eligible for attribution.", style=DIM)
+        )
+        if only_failing:
+            console.print(Text("  (try without --only-failing)", style=DIM))
+        return
+
+    # Persist into the annotation store: merge into existing annotation
+    # for the step if one exists, else create one with category 'other'
+    # so attributions can live without a prior human tag.
+    store = AnnotationStore()
+    existing = {a.step_id: a for a in store.load(path.stem)}
+    saved = 0
+    for step_id, result in results:
+        if step_id in existing:
+            ann = existing[step_id]
+            ann.circuit_attribution = result.to_json_dict()  # type: ignore[assignment]
+        else:
+            ann = Annotation(
+                trace_id=path.stem,
+                step_id=step_id,
+                failure_category="other",  # type: ignore[arg-type]
+                annotator=annotator,
+                circuit_attribution=result.to_json_dict(),  # type: ignore[arg-type]
+            )
+        store.add(ann)
+        saved += 1
+
+    console.print()
+    console.print(
+        Text("  ✓ ", style=GREEN)
+        + Text(f"attributed {saved} step(s)", style=INK)
+        + Text(f"  ·  {attributor.name} / {attributor.model}", style=DIM)
+    )
+    # Tiny preview so the user can see something concrete.
+    first_id, first_result = results[0]
+    feats = first_result.top_features[:3]
+    if feats:
+        console.print()
+        console.print(Text(f"  step {first_id[:12]} top features:", style=DIM))
+        for f in feats:
+            console.print(
+                Text("    ", style=DIM)
+                + Text(f"#{f.feature_id:>6}", style=AMBER)
+                + Text(f"  act={f.activation:.3f}", style=INK)
+                + Text(f"  {f.layer}", style=DIM)
+            )
+    console.print()
+
+
+# ----------------------------------------------------------------------------
 # Export + report + scaffolding + demo
 # ----------------------------------------------------------------------------
 

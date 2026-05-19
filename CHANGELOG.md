@@ -5,7 +5,59 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Planned for 0.1.0
-- SAE-based circuit attribution (the research artifact)
+- Real SAE backend implementation (forward pass + sae-lens projection)
+
+## [0.0.39] — 2026-05-19  ·  Circuit attribution foundation
+
+The v0.2 research-artifact foundation lands. Loupe can now attribute
+each captured ``llm-call`` step to a set of top-K interpretable
+features — the mechanistic foothold that distinguishes Loupe from
+"just another agent observability tool."
+
+### Architecture
+
+This commit ships the *data model + pipeline + CLI + mock backend*.
+The real SAE backend (forward pass through transformer-lens + sae-lens
+projection) is staged behind ``NotImplementedError`` with a precise
+contract in its docstring — coming in the next release once an open
+model + public SAE pair is chosen. Everything around it is in place:
+
+- **``loupe/attribution.py``**
+  - :class:`FeatureActivation` (frozen) — one feature firing in one step.
+  - :class:`AttributionResult` — full per-step result; JSON-stable so
+    annotations can be replayed years later.
+  - :class:`Attributor` protocol — narrow interface every backend implements.
+  - :class:`MockAttributor` — deterministic SHA256-derived synthetic
+    features. Reproducible across machines. Used for CI + plumbing
+    validation when you don't want to pull GBs of weights.
+  - :class:`SAEAttributor` — guarded by ``[interp]`` extra. Real
+    implementation deferred to the next release; the contract is
+    documented in the class docstring.
+  - :func:`make_attributor` factory + :func:`attribute_trace` orchestrator.
+
+### CLI
+
+```
+loupe attribute <trace> [--backend mock|sae] [--top-k 8]
+                        [--only-failing] [--model M --sae S]
+```
+
+- Walks every ``llm-call`` step in the trace.
+- Runs the chosen attributor on each.
+- Persists results into the existing annotation store under the
+  ``circuit_attribution`` field. Idempotent: re-running updates in
+  place, doesn't duplicate. Existing human tags (category, notes,
+  severity) are preserved.
+- Prints a compact preview of the top features for the first step.
+
+### Tests
+
+- 16 new tests (1 skipped pending sae-lens install): deterministic
+  output, activation ordering, divergent inputs, JSON round-trip,
+  factory error paths, llm-call-only walking, ``--only-failing``,
+  CLI persistence, tag-preservation, unknown-trace exit, unknown
+  backend, idempotent re-run, immutability of FeatureActivation.
+- **237 Python + 37 TypeScript = 274 tests.** Ruff + mypy + tsc clean.
 
 ## [0.0.38] — 2026-05-19  ·  DuckDB index for sub-millisecond queries
 
