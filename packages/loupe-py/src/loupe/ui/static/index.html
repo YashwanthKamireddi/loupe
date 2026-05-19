@@ -18,6 +18,10 @@
       <span class="brand-mark">◉</span>
       <span class="brand-name">Loupe</span>
       <span class="brand-sub">forensics for ai agents</span>
+      <span class="live-indicator" id="live-indicator" title="Live updates: connecting…">
+        <span class="live-dot"></span>
+        <span class="live-label">connecting</span>
+      </span>
     </div>
     <div class="stats" id="stats"></div>
     <div class="meta" id="trace-summary"></div>
@@ -50,9 +54,37 @@
         <div class="empty-mark">◉</div>
         <h1 class="empty-title">Inspect agent runs.</h1>
         <p class="empty-sub" id="empty-state-sub">Select a case file from the left.</p>
-        <pre class="empty-hint">$ pip install 'loupe[ui]'
-$ loupe demo      # seed sample traces
-$ loupe ui</pre>
+        <div class="empty-onboard" id="empty-onboard" hidden>
+          <p class="empty-onboard-lede">First time? Get something to look at in 30 seconds:</p>
+          <ol class="empty-steps">
+            <li>
+              <span class="empty-step-n">1</span>
+              <span class="empty-step-body">
+                Seed three sample traces
+                <code class="empty-cmd" data-copy="loupe demo">loupe demo</code>
+              </span>
+            </li>
+            <li>
+              <span class="empty-step-n">2</span>
+              <span class="empty-step-body">
+                Or instrument your own agent
+                <code class="empty-cmd" data-copy="pip install 'loupe[ui]'">pip install 'loupe[ui]'</code>
+              </span>
+            </li>
+            <li>
+              <span class="empty-step-n">3</span>
+              <span class="empty-step-body">
+                Add the decorator and run
+                <code class="empty-cmd" data-copy="@trace
+def my_agent(...): ...">@trace</code>
+              </span>
+            </li>
+          </ol>
+          <p class="empty-foot">
+            New traces appear here automatically — no refresh needed.
+            Press <kbd>?</kbd> for keyboard shortcuts.
+          </p>
+        </div>
       </div>
     </section>
   </main>

@@ -12,6 +12,8 @@ const els = {
   tagForm: document.getElementById("tag-form-tmpl"),
   helpButton: document.getElementById("help-button"),
   helpModal: document.getElementById("help-modal"),
+  liveIndicator: document.getElementById("live-indicator"),
+  emptyOnboard: document.getElementById("empty-onboard"),
 };
 
 const state = {
@@ -21,7 +23,34 @@ const state = {
   traces: [],
   filter: "",
   statusFilter: "all", // 'all' | 'failed' | 'tagged'
+  initialLoad: true,
 };
+
+function setLiveState(kind) {
+  if (!els.liveIndicator) return;
+  els.liveIndicator.classList.remove("is-live", "is-stale");
+  let label, title;
+  if (kind === "live") {
+    els.liveIndicator.classList.add("is-live");
+    label = "live"; title = "Live: new traces stream in automatically";
+  } else if (kind === "stale") {
+    els.liveIndicator.classList.add("is-stale");
+    label = "reconnecting"; title = "Reconnecting to the live stream…";
+  } else {
+    label = "connecting"; title = "Connecting to the live stream…";
+  }
+  const lbl = els.liveIndicator.querySelector(".live-label");
+  if (lbl) lbl.textContent = label;
+  els.liveIndicator.title = title;
+}
+
+function renderSkeleton() {
+  els.list.innerHTML =
+    '<div class="skeleton-list">' +
+    '<div class="skeleton-row"></div>'.repeat(4) +
+    "</div>";
+  if (els.count) els.count.textContent = "…";
+}
 
 /* ----- formatting helpers ------------------------------------------------ */
 
@@ -109,7 +138,15 @@ async function loadStats() {
 }
 
 async function loadTraces() {
-  state.traces = await (await fetch("/api/traces")).json();
+  if (state.initialLoad) renderSkeleton();
+  try {
+    state.traces = await (await fetch("/api/traces")).json();
+  } catch (err) {
+    console.error(err);
+    flashToast("Could not reach the Loupe server.", "error");
+    state.traces = [];
+  }
+  state.initialLoad = false;
   renderTraceList();
   updateEmptyState();
   if (state.traces.length > 0 && !state.traceId) {
@@ -120,13 +157,19 @@ async function loadTraces() {
 
 function updateEmptyState() {
   // Tighten the copy when there genuinely aren't any traces yet vs when
-  // there are some but nothing's selected.
+  // there are some but nothing's selected. Also reveal the onboarding
+  // walkthrough only in the truly-empty case.
   const sub = document.getElementById("empty-state-sub");
-  if (!sub) return;
-  if (state.traces.length === 0) {
-    sub.textContent = "No traces yet — run an instrumented agent or use the commands below to seed samples.";
-  } else {
-    sub.textContent = "Select a case file from the left.";
+  if (sub) {
+    if (state.traces.length === 0) {
+      sub.textContent =
+        "No captured runs yet. Below is the fastest way to put one here.";
+    } else {
+      sub.textContent = "Select a case file from the left.";
+    }
+  }
+  if (els.emptyOnboard) {
+    els.emptyOnboard.hidden = state.traces.length !== 0;
   }
 }
 
@@ -550,6 +593,7 @@ function subscribeToEvents() {
   } catch (_) {
     return;
   }
+  _eventSource.onopen = () => setLiveState("live");
   _eventSource.addEventListener("new_trace", async (e) => {
     let payload;
     try { payload = JSON.parse(e.data); } catch { return; }
@@ -573,9 +617,23 @@ function subscribeToEvents() {
     }
   });
   _eventSource.onerror = () => {
-    // Browser auto-reconnects with backoff; nothing to do here.
+    // Browser auto-reconnects with backoff; reflect it in the topbar so the
+    // user can tell whether they're looking at a frozen snapshot.
+    setLiveState("stale");
   };
 }
 
+// Wire up copy-on-click for the onboarding commands. Delegated so the
+// listener works even if we re-render the empty state.
+document.addEventListener("click", (e) => {
+  const cmd = e.target.closest?.("[data-copy]");
+  if (!cmd) return;
+  navigator.clipboard?.writeText(cmd.dataset.copy).then(() => {
+    cmd.classList.add("copied");
+    setTimeout(() => cmd.classList.remove("copied"), 1400);
+  });
+});
+
+setLiveState("connecting");
 loadTraces();
 subscribeToEvents();

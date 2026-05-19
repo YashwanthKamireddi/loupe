@@ -8,6 +8,33 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.32] — 2026-05-19
+
+### UI — first-run onboarding + live state visibility
+
+Three production-polish additions to the dashboard so it stops feeling
+like a debug page and starts feeling like a hand-crafted forensic tool.
+
+- **Live connection indicator.** Small pulsing dot in the topbar next to
+  the brand: `connecting` → `live` (green, gentle 2.4s pulse) →
+  `reconnecting` (amber) when the SSE stream drops. Honors
+  `prefers-reduced-motion`.
+- **First-run onboarding card.** When the home is empty, the viewer
+  shows a three-step numbered walkthrough (`loupe demo` → install →
+  `@trace`) with click-to-copy command pills. Each pill flashes a
+  green ✓ confirmation. Replaces the inert `<pre>` block.
+- **Loading skeleton.** During the very first `/api/traces` fetch the
+  sidebar shows shimmering placeholder rows instead of momentarily
+  flashing "No traces yet" before real data arrives.
+
+### UI — error path
+- Network failure on the first fetch now surfaces a red toast
+  ("Could not reach the Loupe server.") instead of silently leaving
+  the page blank.
+
+### Tests
+- 203 Python + 35 TypeScript = **238 tests**. No regressions.
+
 ## [0.0.31] — 2026-05-19
 
 Two real-world production bugs surfaced when running Loupe end-to-end

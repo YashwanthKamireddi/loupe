@@ -424,6 +424,181 @@ input, select, textarea {
   text-align: left;
 }
 
+/* First-run onboarding — replaces the static <pre> hint with an actionable
+   numbered walkthrough. Shown only when there are zero traces (set by JS). */
+.empty-onboard {
+  margin-top: var(--s-4);
+  max-width: 560px;
+  text-align: left;
+  padding: var(--s-6);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.empty-onboard-lede {
+  color: var(--ink-2);
+  font-size: var(--t-md);
+  margin-bottom: var(--s-4);
+}
+.empty-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: 0;
+  margin: 0;
+}
+.empty-steps li {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+}
+.empty-step-n {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-border);
+  color: var(--amber);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Inter", system-ui, sans-serif;
+  margin-top: 1px;
+}
+.empty-step-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: var(--t-base);
+}
+.empty-cmd {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 3px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: var(--t-sm);
+  color: var(--amber);
+  cursor: pointer;
+  transition: border-color 100ms, color 100ms;
+  user-select: none;
+}
+.empty-cmd:hover {
+  border-color: var(--amber-border);
+}
+.empty-cmd.copied {
+  color: var(--green);
+  border-color: var(--green);
+}
+.empty-cmd.copied::after {
+  content: " ✓ copied";
+  font-size: var(--t-xs);
+  color: var(--green);
+  opacity: 0.8;
+}
+.empty-foot {
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--t-sm);
+  color: var(--ink-3);
+  line-height: 1.6;
+}
+.empty-foot kbd {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+/* Live (SSE) connection indicator in the topbar. Subtle by default,
+   pulses when connected, dims when offline. */
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: var(--s-3);
+  padding: 2px 8px 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  background: var(--bg-base);
+  transition: color 200ms, border-color 200ms;
+}
+.live-indicator .live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ink-4);
+  transition: background 200ms, box-shadow 200ms;
+}
+.live-indicator.is-live {
+  color: var(--green);
+  border-color: rgba(126, 169, 107, 0.36);
+}
+.live-indicator.is-live .live-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 2px rgba(126, 169, 107, 0.18);
+  animation: live-pulse 2.4s ease-in-out infinite;
+}
+.live-indicator.is-stale {
+  color: var(--amber);
+  border-color: var(--amber-border);
+}
+.live-indicator.is-stale .live-dot {
+  background: var(--amber);
+}
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(126, 169, 107, 0.18); }
+  50%      { box-shadow: 0 0 0 5px rgba(126, 169, 107, 0.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-indicator.is-live .live-dot { animation: none; }
+}
+
+/* Loading skeleton — shown only during initial fetch so we don't briefly
+   flash "No traces yet" while the API is still in-flight. */
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+.skeleton-row {
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--bg-surface) 0%,
+    var(--bg-hover) 50%,
+    var(--bg-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.6s ease-in-out infinite;
+  opacity: 0.6;
+}
+@keyframes skel-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-row { animation: none; }
+}
+
 .trace-view {
   display: flex;
   flex-direction: column;
