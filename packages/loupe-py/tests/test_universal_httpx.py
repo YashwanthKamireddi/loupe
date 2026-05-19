@@ -168,6 +168,45 @@ def test_idempotent_patch() -> None:
     assert httpx_mod.patch() is False
 
 
+def test_extracts_model_from_gemini_url(store: JSONLStore) -> None:
+    """Gemini puts the model in the URL path, not the body. Real-world bug
+    found when running `loupe-chat` against a real Gemini API key — the
+    captured step said `gemini:unknown` because body.model was None."""
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    httpx._state["response"] = _make_response(
+        200,
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": "ok"}]}}
+            ]
+        },
+    )
+
+    @trace(framework="gemini-test", store=store)
+    def run() -> None:
+        url = (
+            "https://generativelanguage.googleapis.com"
+            "/v1beta/models/gemini-2.0-flash:generateContent"
+        )
+        # Gemini body has no "model" key — the model is in the URL.
+        httpx.Client().send(_make_request(url, {"contents": [{"parts": []}]}))
+
+    run()
+    steps = _read_steps(store)
+    assert len(steps) == 1
+    step = steps[0]
+    # The provider label is whatever the _providers.py registry calls
+    # generativelanguage.googleapis.com — currently "gemini". The model
+    # extraction is what we're testing here.
+    assert ":gemini-2.0-flash" in step["name"]
+    assert step["inputs"]["model"] == "gemini-2.0-flash"
+
+
 def test_direct_capture_suppresses_httpx_layer(store: JSONLStore) -> None:
     """When a direct SDK integration is active, universal-httpx must skip.
 

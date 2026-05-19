@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import functools
 import json as _json
+import re
 import time
 import uuid
 from typing import Any
@@ -133,6 +134,26 @@ def _classify(request: Any, body: Any) -> str | None:
     return None
 
 
+_GEMINI_URL_MODEL = re.compile(r"/models/([^/:?]+)(?:[:/?].*)?$")
+
+
+def _extract_model(request: Any, body: dict | None) -> str | None:
+    """Pull the model name out of the request — body first, then URL.
+
+    Different providers put the model in different places:
+      - Anthropic / OpenAI / most: in the JSON body `model` field
+      - Google Gemini: in the URL path `/v1beta/models/<name>:generateContent`
+    """
+    if isinstance(body, dict) and isinstance(body.get("model"), str):
+        return body["model"]
+    try:
+        path = urlparse(str(request.url)).path
+    except Exception:
+        return None
+    m = _GEMINI_URL_MODEL.search(path)
+    return m.group(1) if m else None
+
+
 def _safe_read_request_body(request: Any) -> dict | None:
     """Best-effort parse of a JSON request body. Returns None on any failure."""
     try:
@@ -158,7 +179,7 @@ def _emit(
     if t is None:
         return
 
-    model = (body or {}).get("model") if isinstance(body, dict) else None
+    model = _extract_model(request, body)
     inputs: dict[str, Any] = {"provider": provider, "model": model}
     if isinstance(body, dict):
         if "messages" in body:

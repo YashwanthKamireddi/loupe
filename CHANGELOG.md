@@ -8,6 +8,26 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.35] — 2026-05-19
+
+### Fixed — Gemini model extraction in universal-httpx
+
+Bug surfaced by running a real loupe-chat session against a live Gemini
+API key. Captured step said `gemini:unknown` because the universal-httpx
+interceptor only looked at `body["model"]` — but Gemini (alone among
+major providers) puts the model in the URL path:
+
+    /v1beta/models/gemini-2.0-flash:generateContent
+
+Now `_extract_model()` checks the body first, then falls back to a regex
+on the URL path. Captured steps now correctly report `gemini:gemini-2.0-flash`
+with `model` populated in inputs.
+
+### Tests
+- 1 new test (`test_extracts_model_from_gemini_url`) pins the URL-path
+  extraction so this regression can't sneak back.
+- **213 Python + 37 TypeScript = 250 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.34] — 2026-05-19  &nbsp; · &nbsp; `@loupe/sdk` 0.0.19
 
 ### TypeScript SDK — dedup parity with Python
