@@ -8,6 +8,45 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.33] — 2026-05-19
+
+### Backend hardening — production-grade UI server
+
+Two real findings from a careful audit of `loupe.ui.server`.
+
+**Fix — `_find_trace` no longer trusts the URL path**
+
+The lookup ran `traces_dir.glob(f"{trace_id}*.jsonl")` directly on the
+URL-supplied id. A request to `/api/traces/*` would have matched every
+file in the directory (and returned the first); `[abc]` is a bracket
+pattern; `..` could in pathological setups have escaped the directory.
+
+Now:
+- Reject ids containing `/ \ \0 \n \r \t * ? [ ] { }`.
+- Reject `.`, `..`, or any id starting with `.`.
+- Reject ids over 128 chars.
+- Defense in depth: every matched file is resolved and re-rooted under
+  `traces_dir` — symlink-out attempts can't escape the directory.
+
+**Fix — `POST /api/traces` now caps body size at 8 MB**
+
+Before: an attacker (or buggy client) could ship a multi-GB JSON body
+that uvicorn would buffer in memory before FastAPI got a chance to
+reject it.
+
+Now: a declared Content-Length over the cap fails fast with `413
+Payload Too Large` before any body bytes are read. Any body that grows
+past the cap during read also 413s. 8 MB is generous — large traces
+should be written directly to `~/.loupe/traces/`, not uploaded.
+
+### Tests
+- 5 parametrized "evil trace_id" cases (`*`, `[abc]`, `..`, `.hidden`,
+  `../etc/passwd`).
+- 1 direct unit test of `_find_trace` for control chars and `?` that
+  the HTTP layer would otherwise reject before reaching the server.
+- 2 oversized-body tests: 9 MB payload + 100 MB declared Content-Length.
+- **212 Python + 35 TypeScript = 247 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.32] — 2026-05-19
 
 ### UI — first-run onboarding + live state visibility

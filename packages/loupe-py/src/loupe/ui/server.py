@@ -47,6 +47,16 @@ from loupe.store import _default_dir
 _EVENTS_POLL_INTERVAL = 1.5
 # Keep-alive comment interval so reverse proxies don't time the SSE stream out
 _EVENTS_KEEPALIVE = 25.0
+# Hard ceiling on the JSON body of POST /api/traces. Anything bigger is almost
+# certainly a mistake (multi-MB traces should be uploaded as a JSONL file
+# directly to ~/.loupe/traces/, not posted to the dashboard). The default is
+# generous — large enough for ~20 detailed steps with full message payloads.
+_MAX_INGEST_BODY_BYTES = 8 * 1024 * 1024  # 8 MB
+
+# trace_id is a path-component, so reject anything that could (a) escape the
+# traces directory via traversal or (b) act as a shell-glob wildcard against
+# Path.glob (which would silently widen the search to other files).
+_FORBIDDEN_TRACE_ID_CHARS = frozenset("/\\\x00\n\r\t*?[]{}")
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -101,9 +111,27 @@ def create_app() -> FastAPI:
         The shape mirrors the canonical JSONL wire format. See docs/SPEC.md
         for the full schema. Returns the trace_id so callers can link to it.
         """
+        # Cheap pre-check: if the client declared an oversized body, reject
+        # before we buffer it. Falls through if no Content-Length is set —
+        # we still cap after read.
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _MAX_INGEST_BODY_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"trace body exceeds {_MAX_INGEST_BODY_BYTES // (1024 * 1024)} MB; "
+                    "upload large traces directly to ~/.loupe/traces/"
+                ),
+            )
+        body = await request.body()
+        if len(body) > _MAX_INGEST_BODY_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"trace body exceeds {_MAX_INGEST_BODY_BYTES // (1024 * 1024)} MB",
+            )
         try:
-            payload = await request.json()
-        except Exception as exc:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
         try:
             trace = ingest(payload)
@@ -265,8 +293,31 @@ def create_app() -> FastAPI:
 
 
 def _find_trace(traces_dir: Path, trace_id: str) -> Path | None:
+    """Resolve a (possibly-prefix) trace id to a file in `traces_dir`.
+
+    Rejects ids that contain path separators, traversal segments, or
+    glob wildcards — those would otherwise widen `Path.glob` beyond the
+    traces directory or match unrelated files.
+    """
+    if not trace_id or len(trace_id) > 128:
+        return None
+    if any(c in _FORBIDDEN_TRACE_ID_CHARS for c in trace_id):
+        return None
+    if trace_id in (".", "..") or trace_id.startswith("."):
+        return None
     matches = list(traces_dir.glob(f"{trace_id}*.jsonl"))
-    return matches[0] if matches else None
+    if not matches:
+        return None
+    # Defense in depth: every match must actually live inside traces_dir.
+    # Catches any edge case where glob returns a symlink that points outside.
+    traces_root = traces_dir.resolve()
+    for m in matches:
+        try:
+            m.resolve().relative_to(traces_root)
+            return m
+        except ValueError:
+            continue
+    return None
 
 
 def _read_header(path: Path) -> dict[str, Any] | None:
