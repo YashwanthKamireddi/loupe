@@ -70,6 +70,7 @@ loupe report <trace>              Render a shareable markdown case file (--out F
 loupe report <trace> --html       Render a *standalone single-file HTML viewer* (no CDN, no network)
 loupe verify <trace> | --all      Validate trace(s) against docs/loupe-trace.schema.json
 loupe doctor                      Diagnose your install + every integration's status
+loupe purge --older-than 7d       Free disk space — delete old traces (dry-run unless --yes)
 loupe providers                   List all 49 auto-detected LLM provider hosts
 loupe version                     Print Loupe version
 ```

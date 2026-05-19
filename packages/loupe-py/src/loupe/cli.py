@@ -18,6 +18,7 @@ Commands:
     loupe export [--out FILE]         Bundle annotated failures
     loupe report <trace-id> [--out]   Render a shareable markdown case file
     loupe doctor                      Diagnose install + integrations
+    loupe purge [--older-than 7d]     Delete old captured traces (dry-run by default)
     loupe version                     Print version
 """
 
@@ -1051,6 +1052,138 @@ def verify(
             )
         )
         raise typer.Exit(code=1)
+
+
+@app.command("purge")
+def purge(
+    older_than: str = typer.Option(
+        ...,
+        "--older-than",
+        help="Age threshold. Use suffixes: '7d', '24h', '30m', '3600s'.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Actually delete. Without this flag, purge is a dry-run.",
+    ),
+    keep_tagged: bool = typer.Option(
+        False,
+        "--keep-tagged",
+        help="Skip traces that have any annotations — protect your benchmark set.",
+    ),
+) -> None:
+    """Delete captured traces older than a given age. Dry-run by default."""
+    try:
+        max_age = _parse_duration(older_than)
+    except ValueError as exc:
+        console.print(Text(f"  {exc}", style=RED))
+        raise typer.Exit(code=1) from None
+
+    import time as _time
+
+    traces_dir = _default_dir() / "traces"
+    annotations_dir = _default_dir() / "annotations"
+    if not traces_dir.exists():
+        console.print(Text("  no traces to purge.", style=DIM))
+        return
+
+    now = _time.time()
+    all_traces = sorted(traces_dir.glob("*.jsonl"))
+    candidates: list[tuple[Path, float]] = []
+    for path in all_traces:
+        age = now - path.stat().st_mtime
+        if age >= max_age:
+            candidates.append((path, age))
+
+    if keep_tagged:
+        store = AnnotationStore(annotations_dir)
+        candidates = [
+            (p, age) for (p, age) in candidates
+            if not store.load(p.stem)
+        ]
+
+    if not candidates:
+        console.print(Text(f"  no traces older than {older_than}.", style=DIM))
+        return
+
+    verb = "would delete" if not yes else "deleting"
+    console.print()
+    console.print(
+        Text(f"  {verb} {len(candidates)} trace(s) older than ", style=INK)
+        + Text(older_than, style=AMBER)
+        + (Text("  (--keep-tagged: annotated traces skipped)", style=DIM)
+           if keep_tagged else Text())
+    )
+    console.print()
+    for path, age in candidates:
+        console.print(
+            Text(f"    {path.stem[:12]}", style=INK)
+            + Text(f"   {_fmt_age(age)} old", style=DIM)
+        )
+
+    if not yes:
+        console.print()
+        console.print(hint("loupe purge --older-than " + older_than + " --yes    actually delete"))
+        if keep_tagged:
+            console.print(hint("(re-run without --keep-tagged to include annotated traces)"))
+        console.print()
+        return
+
+    import contextlib
+
+    deleted = 0
+    for path, _age in candidates:
+        try:
+            path.unlink()
+        except OSError as exc:
+            console.print(Text(f"  ✗ could not delete {path.stem[:12]}: {exc}", style=RED))
+            continue
+        deleted += 1
+        # Best-effort: also remove the sidecar annotation + lock files.
+        for suffix in (".json", ".lock"):
+            sidecar = annotations_dir / f"{path.stem}{suffix}"
+            with contextlib.suppress(OSError):
+                sidecar.unlink(missing_ok=True)
+
+    console.print()
+    console.print(Text(f"  ✓ deleted {deleted} trace(s).", style=GREEN))
+    console.print()
+
+
+def _parse_duration(text: str) -> float:
+    """Parse '7d' / '24h' / '30m' / '3600s' / '90' → seconds. Raises ValueError."""
+    if not text:
+        raise ValueError("empty duration")
+    text = text.strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if text[-1] in units:
+        try:
+            value = float(text[:-1])
+        except ValueError as e:
+            raise ValueError(f"invalid duration {text!r}") from e
+        seconds = value * units[text[-1]]
+    else:
+        try:
+            seconds = float(text)
+        except ValueError as e:
+            raise ValueError(
+                f"invalid duration {text!r} — use '7d', '24h', '30m', '3600s'"
+            ) from e
+    if seconds < 0:
+        raise ValueError("duration must be non-negative")
+    return seconds
+
+
+def _fmt_age(seconds: float) -> str:
+    """Render a coarse human-readable age. Picks the largest unit that yields ≥1."""
+    if seconds >= 86400:
+        return f"{seconds / 86400:.1f}d"
+    if seconds >= 3600:
+        return f"{seconds / 3600:.1f}h"
+    if seconds >= 60:
+        return f"{seconds / 60:.1f}m"
+    return f"{seconds:.0f}s"
 
 
 def _validate_trace_file(

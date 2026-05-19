@@ -8,6 +8,37 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.30] — 2026-05-19
+
+### Added — `loupe purge` for trace lifecycle
+
+Real users accumulate traces; you need a safe way to free disk
+without writing your own `find`/`rm` scripts.
+
+```
+loupe purge --older-than 7d                  # dry-run (default)
+loupe purge --older-than 30d --yes           # actually delete
+loupe purge --older-than 30d --yes --keep-tagged   # protect the bench set
+```
+
+Safety design:
+- **Dry-run by default.** Without `--yes`, prints what would be deleted,
+  then exits 0 without touching disk. The hint line includes the exact
+  `--yes` command to re-run.
+- **`--keep-tagged` protects annotated traces.** Anything you've tagged
+  is part of your benchmark set; the flag opts it out of purging.
+- **Cleans up sidecars too.** Deletes both `{trace}.jsonl` and the
+  matching `annotations/{trace}.json` + `.lock`.
+- **Friendly duration parser.** `30s` / `15m` / `24h` / `7d` / `3600`
+  (bare seconds). Garbage gets a readable error, not a Python traceback.
+- **Empty-home no-op.** Newly-installed users running `purge` first
+  get a clean "no traces" message instead of a crash.
+
+### Tests
+- 8 new purge tests: dry-run, --yes, --keep-tagged, no-match, invalid
+  duration, empty home, plus 2 direct duration-parser unit tests.
+- **194 Python + 35 TypeScript = 229 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.29] — 2026-05-18
 
 ### Added — CLI test coverage for the latest behavior

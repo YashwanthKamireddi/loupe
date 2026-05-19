@@ -402,3 +402,143 @@ def test_ui_auto_port_walks_forward(
         assert busy < resolved <= busy + 9
     finally:
         sock.close()
+
+
+# ---------------------------------------------------------------------------
+# purge — trace lifecycle / disk-space management
+# ---------------------------------------------------------------------------
+
+
+def _age_file(path: Path, age_seconds: float) -> None:
+    """Backdate a file's mtime so the purge command sees it as older than N."""
+    import os
+    import time as _time
+
+    target_mtime = _time.time() - age_seconds
+    os.utime(path, (target_mtime, target_mtime))
+
+
+def test_purge_dry_run_does_not_delete(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """Without --yes, purge must only list candidates — never touch disk."""
+    trace_id = _seed_one_trace(loupe_home)
+    trace_path = loupe_home / "traces" / f"{trace_id}.jsonl"
+    _age_file(trace_path, 86400 * 30)  # 30 days
+
+    result = runner.invoke(app, ["purge", "--older-than", "7d"])
+    assert result.exit_code == 0, result.output
+    assert "would delete 1" in result.output
+    assert trace_id[:12] in result.output
+    assert "loupe purge --older-than 7d --yes" in result.output
+    assert trace_path.exists(), "dry-run must not delete files"
+
+
+def _first_step_id(jsonl_path: Path) -> str:
+    """Return the first step_id from a trace JSONL — for use with `loupe tag`."""
+    import json as _json
+
+    for line in jsonl_path.read_text().splitlines():
+        obj = _json.loads(line)
+        if obj.get("_type") == "step":
+            return str(obj["step_id"])
+    raise AssertionError(f"no step found in {jsonl_path}")
+
+
+def test_purge_with_yes_actually_deletes(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """--yes must remove the trace JSONL AND its annotation sidecar."""
+    trace_id = _seed_one_trace(loupe_home)
+    trace_path = loupe_home / "traces" / f"{trace_id}.jsonl"
+    step_id = _first_step_id(trace_path)
+    _age_file(trace_path, 86400 * 30)
+
+    # Drop an annotation so we can confirm the sidecar gets cleaned up too.
+    tag = runner.invoke(app, ["tag", trace_id[:12], step_id[:8], "regression"])
+    assert tag.exit_code == 0, tag.output
+    sidecar = loupe_home / "annotations" / f"{trace_id}.json"
+    assert sidecar.exists()
+
+    result = runner.invoke(app, ["purge", "--older-than", "7d", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "deleted 1" in result.output
+    assert not trace_path.exists()
+    assert not sidecar.exists(), "annotation sidecar must be cleaned up"
+
+
+def test_purge_keep_tagged_skips_annotated(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """--keep-tagged is a safety: annotated traces are part of the bench set."""
+    keep_id = _seed_one_trace(loupe_home)
+    drop_id = _seed_one_trace(loupe_home)
+    keep_step = _first_step_id(loupe_home / "traces" / f"{keep_id}.jsonl")
+    for tid in (keep_id, drop_id):
+        _age_file(loupe_home / "traces" / f"{tid}.jsonl", 86400 * 30)
+
+    # Annotate only one.
+    tag_result = runner.invoke(app, ["tag", keep_id[:12], keep_step[:8], "regression"])
+    assert tag_result.exit_code == 0, tag_result.output
+
+    result = runner.invoke(
+        app, ["purge", "--older-than", "7d", "--yes", "--keep-tagged"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "deleted 1" in result.output
+    assert (loupe_home / "traces" / f"{keep_id}.jsonl").exists()
+    assert not (loupe_home / "traces" / f"{drop_id}.jsonl").exists()
+
+
+def test_purge_no_match_is_a_clean_no_op(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """Recent traces below the threshold leave the disk untouched."""
+    trace_id = _seed_one_trace(loupe_home)
+    # Don't age the file — it's brand new.
+    result = runner.invoke(app, ["purge", "--older-than", "7d", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "no traces older than 7d" in result.output
+    assert (loupe_home / "traces" / f"{trace_id}.jsonl").exists()
+
+
+def test_purge_rejects_invalid_duration(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """A malformed duration must exit 1 with a readable error, no traceback."""
+    result = runner.invoke(app, ["purge", "--older-than", "banana"])
+    assert result.exit_code == 1
+    assert "invalid duration" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_purge_empty_home_is_a_clean_no_op(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """An empty LOUPE_HOME must not crash — common on first install."""
+    result = runner.invoke(app, ["purge", "--older-than", "1h", "--yes"])
+    assert result.exit_code == 0
+    assert "no traces" in result.output
+
+
+def test_parse_duration_accepts_all_suffixes() -> None:
+    """Unit-test the duration parser directly."""
+    from loupe.cli import _parse_duration
+
+    assert _parse_duration("30s") == 30.0
+    assert _parse_duration("5m") == 300.0
+    assert _parse_duration("2h") == 7200.0
+    assert _parse_duration("7d") == 7 * 86400.0
+    assert _parse_duration("3600") == 3600.0  # bare number = seconds
+    assert _parse_duration("0d") == 0.0
+
+
+def test_parse_duration_rejects_garbage() -> None:
+    from loupe.cli import _parse_duration
+
+    for bad in ("", "abc", "7x", "-1d", "1.2.3h"):
+        try:
+            _parse_duration(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"_parse_duration({bad!r}) should have raised")
