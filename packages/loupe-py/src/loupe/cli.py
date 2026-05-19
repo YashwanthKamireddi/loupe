@@ -2,8 +2,6 @@
 
 Commands:
     loupe                             Welcome screen + quickstart
-    loupe start                       Interactive first run: seed + open UI
-    loupe demo                        Seed three sample traces
     loupe init <name>                 Scaffold a starter agent project
     loupe providers                   List every LLM provider auto-detected
     loupe stats                       Aggregate overview of captured state
@@ -55,7 +53,6 @@ from loupe._tui import (
 from loupe._version import __version__
 from loupe.annotation import Annotation, AnnotationStore
 from loupe.bench import export_jsonl
-from loupe.demo import seed as demo_seed
 from loupe.report import render_trace_markdown
 from loupe.scaffold import scaffold
 from loupe.store import _default_dir
@@ -93,12 +90,9 @@ def _show_welcome() -> None:
         next_steps = stack(
             section("Get started in 30 seconds"),
             Text(),
-            cmd("loupe start         # seed sample traces + open the dashboard"),
-            Text(),
-            section("Or, one at a time"),
-            cmd("loupe demo          # create three sample traces"),
-            cmd("loupe ui            # open the forensic dashboard"),
-            cmd("loupe init my-agent # scaffold an instrumented starter project"),
+            cmd("loupe init my-agent  # scaffold an instrumented starter project"),
+            cmd("cd my-agent && python agent.py 'your first question'"),
+            cmd("loupe ui             # open the forensic dashboard"),
         )
     else:
         next_steps = stack(
@@ -106,7 +100,7 @@ def _show_welcome() -> None:
             Text(),
             cmd("loupe ui            # open the forensic dashboard"),
             cmd("loupe list          # see them in the terminal"),
-            cmd("loupe demo          # add more samples"),
+            cmd("loupe stats         # aggregate counts + framework breakdown"),
         )
 
     render_padded(
@@ -124,24 +118,16 @@ def _show_welcome() -> None:
 def start(
     port: int = typer.Option(7860, "--port", "-p", help="Port for the dashboard"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't auto-open the browser"),
-    skip_demo: bool = typer.Option(False, "--no-demo", help="Don't seed demo traces"),
 ) -> None:
-    """Interactive first run: seed samples, open the dashboard."""
-    render_padded(banner("first run", version=__version__))
+    """Open the dashboard. If you have no traces yet, you'll see the onboarding."""
+    render_padded(banner("dashboard", version=__version__))
 
     home = _default_dir()
     existing = len(list((home / "traces").glob("*.jsonl"))) if (home / "traces").exists() else 0
-    needs_seed = existing == 0 and not skip_demo
-
-    if needs_seed:
-        console.print(Text("  Seeding sample traces…", style=DIM))
-        ids = demo_seed()
-        console.print(
-            Text("  ✓ ", style=GREEN) +
-            Text(f"{len(ids)} sample trace(s) created.", style=INK)
-        )
-    elif existing > 0:
-        console.print(Text("  ✓ ", style=GREEN) + Text(f"{existing} existing trace(s).", style=INK))
+    if existing > 0:
+        console.print(Text("  ✓ ", style=GREEN) + Text(f"{existing} trace(s) captured.", style=INK))
+    else:
+        console.print(Text("  No traces yet — run an instrumented agent and refresh.", style=DIM))
 
     url = f"http://127.0.0.1:{port}"
     console.print(Text("  Dashboard:  ", style=DIM) + Text(url, style=AMBER))
@@ -529,22 +515,6 @@ def init(
     console.print(cmd(f"cd {display_path}"))
     console.print(cmd("python agent.py"))
     console.print(cmd("loupe ui"))
-    console.print()
-
-
-@app.command("demo")
-def demo(
-    no_tag: bool = typer.Option(False, "--no-tag", help="Skip pre-baked annotation"),
-) -> None:
-    """Seed three sample traces so the dashboard isn't empty."""
-    ids = demo_seed(tag_failure=not no_tag)
-    console.print()
-    console.print(Text(f"  ◉ seeded {len(ids)} trace(s)", style=AMBER))
-    for trace_id in ids:
-        console.print(Text(f"     → {trace_id[:12]}", style=DIM))
-    console.print()
-    console.print(Text("  Now run ", style=DIM) + Text("loupe ui", style=AMBER) +
-                  Text(" or refresh http://localhost:7860", style=DIM))
     console.print()
 
 
@@ -1302,8 +1272,8 @@ def _no_traces_hint() -> object:
     return stack(
         Text("  No traces yet.", style=INK),
         Text(),
-        hint("loupe demo    seed three sample traces"),
-        hint("loupe init    scaffold an instrumented project"),
+        hint("loupe init my-agent    scaffold an instrumented starter project"),
+        hint("loupe ui               open the dashboard (will show onboarding)"),
     )
 
 

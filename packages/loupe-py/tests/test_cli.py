@@ -74,8 +74,8 @@ def test_welcome_screen_when_no_args(runner: CliRunner, loupe_home: Path) -> Non
     result = runner.invoke(app, [])
     assert result.exit_code == 0
     assert "L O U P E" in result.output
-    # Empty-state copy
-    assert "loupe start" in result.output or "loupe demo" in result.output
+    # Empty-state copy points at the real first-run flow.
+    assert "loupe init" in result.output
 
 
 def test_version(runner: CliRunner, loupe_home: Path) -> None:
@@ -244,18 +244,6 @@ def test_init_refuses_non_empty_dir(runner: CliRunner, loupe_home: Path, tmp_pat
     result = runner.invoke(app, ["init", "demo-agent", "--dir", str(target)])
     assert result.exit_code == 1
     assert "non-empty" in result.output.lower() or "refusing" in result.output.lower()
-
-
-def test_demo_seeds_traces(runner: CliRunner, loupe_home: Path) -> None:
-    result = runner.invoke(app, ["demo"])
-    assert result.exit_code == 0
-    assert "seeded" in result.output
-
-    # We should now see traces
-    list_result = runner.invoke(app, ["list"])
-    assert "happy-summary-agent" in list_result.output \
-        or "auth-refactor-agent" in list_result.output \
-        or "data-loader-agent" in list_result.output
 
 
 # ---------------------------------------------------------------------------

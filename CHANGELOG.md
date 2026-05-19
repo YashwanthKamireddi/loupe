@@ -8,6 +8,34 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - DuckDB indexer for fast search across many traces
 - SAE-based circuit attribution (the research artifact)
 
+## [0.0.36] — 2026-05-19
+
+### Removed — `loupe demo` and all fake content
+
+World-class developer SDKs (Stripe, Sentry, Vercel) never seed fake
+data into a user's account. Their onboarding instruments the user's
+real code. Loupe now does the same.
+
+**Removed:**
+- `loupe demo` command + `loupe/demo.py` module + `tests/test_demo.py`
+- The fake-claude / placeholder LLM step in the `loupe init` scaffold
+- All "Pretend to call an LLM" placeholder comments
+- Demo-seeding from `loupe start` (it now just opens the dashboard;
+  empty home is fine — the in-browser onboarding card guides the user)
+- README's "30-second quickstart" referencing pre-seeded fake traces
+
+**Replaced with a real first-run flow:**
+- `loupe init my-agent` scaffolds a working agent that calls **real
+  Gemini** (free tier) — the user sets one env var and runs `python
+  agent.py "their question"` to capture their first real trace.
+- The welcome screen, the dashboard's empty-state onboarding card, and
+  the empty trace-list hint all point at this real flow.
+
+### Tests
+- Scaffold test now asserts the generated agent uses a real LLM SDK
+  (`google` import present) and contains no `fake` or `pretend` strings.
+- **213 Python + 37 TypeScript = 250 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.35] — 2026-05-19
 
 ### Fixed — Gemini model extraction in universal-httpx

@@ -54,8 +54,7 @@ Or, all at once: `pip install 'loupe[ui,universal,langgraph,anthropic,openai,pyd
 
 ```text
 loupe                             Welcome screen + quickstart
-loupe start                       Interactive first run: seed samples + open the dashboard
-loupe demo                        Seed three realistic sample traces
+loupe start                       Open the dashboard (auto-opens browser)
 loupe init <name>                 Scaffold a Loupe-instrumented starter project
 loupe ui [--port 7860]            Launch the local forensic dashboard
 loupe list                        List all captured traces in a compact table
@@ -75,13 +74,27 @@ loupe providers                   List all 49 auto-detected LLM provider hosts
 loupe version                     Print Loupe version
 ```
 
-## 30-second quickstart
+## 60-second quickstart
 
-```bash
-loupe start         # seeds sample traces + opens the dashboard
+```fish
+# 1. Get a free Gemini key:  https://aistudio.google.com/apikey
+set -Ux GEMINI_API_KEY YOUR_KEY   # fish (persists across sessions)
+
+# 2. Scaffold a real agent project
+loupe init my-agent
+cd my-agent
+
+# 3. Run it — calls real Gemini, writes a real trace
+python agent.py "your question here"
+
+# 4. Open the dashboard in another terminal
+loupe ui
 ```
 
-That's it. The browser pops up at `http://localhost:7860` with three real-looking traces, one of them already tagged as a `unguarded-delete` failure, so you can play with the UI immediately.
+The browser opens at `http://localhost:7860`. You'll see the live SSE
+indicator pulsing green and one captured trace in the sidebar. Click it
+to inspect every step, the underlying HTTP request, and the model's
+response. Run the agent again — new traces stream in without a refresh.
 
 ## Instrument your own agent — pick your stack
 

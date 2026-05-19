@@ -55,28 +55,27 @@
         <h1 class="empty-title">Inspect agent runs.</h1>
         <p class="empty-sub" id="empty-state-sub">Select a case file from the left.</p>
         <div class="empty-onboard" id="empty-onboard" hidden>
-          <p class="empty-onboard-lede">First time? Get something to look at in 30 seconds:</p>
+          <p class="empty-onboard-lede">Get a real captured agent run in front of you in 60 seconds:</p>
           <ol class="empty-steps">
             <li>
               <span class="empty-step-n">1</span>
               <span class="empty-step-body">
-                Seed three sample traces
-                <code class="empty-cmd" data-copy="loupe demo">loupe demo</code>
+                Scaffold a starter project
+                <code class="empty-cmd" data-copy="loupe init my-agent">loupe init my-agent</code>
               </span>
             </li>
             <li>
               <span class="empty-step-n">2</span>
               <span class="empty-step-body">
-                Or instrument your own agent
-                <code class="empty-cmd" data-copy="pip install 'loupe[ui]'">pip install 'loupe[ui]'</code>
+                Set a free Gemini key (one time, persists in fish)
+                <code class="empty-cmd" data-copy="set -Ux GEMINI_API_KEY YOUR_KEY">set -Ux GEMINI_API_KEY YOUR_KEY</code>
               </span>
             </li>
             <li>
               <span class="empty-step-n">3</span>
               <span class="empty-step-body">
-                Add the decorator and run
-                <code class="empty-cmd" data-copy="@trace
-def my_agent(...): ...">@trace</code>
+                Run the agent — the trace lands here live
+                <code class="empty-cmd" data-copy="cd my-agent && python agent.py 'hello'">cd my-agent && python agent.py 'hello'</code>
               </span>
             </li>
           </ol>

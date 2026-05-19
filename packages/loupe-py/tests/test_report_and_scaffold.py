@@ -79,10 +79,14 @@ def test_report_for_successful_trace(loupe_home: Path) -> None:
 
 
 def test_scaffold_creates_runnable_starter(tmp_path: Path) -> None:
-    target = tmp_path / "demo-agent"
-    files = scaffold(target, "demo-agent")
+    target = tmp_path / "my-agent"
+    files = scaffold(target, "my-agent")
     assert {f.name for f in files} == {"agent.py", "README.md", ".gitignore"}
     agent_src = (target / "agent.py").read_text()
     assert "from loupe import record_step, trace" in agent_src
-    assert 'framework="starter"' in agent_src
-    assert "demo-agent" in (target / "README.md").read_text()
+    assert "from loupe.integrations import patch_all" in agent_src
+    # The scaffold must produce a real LLM call — never a placeholder.
+    assert "fake" not in agent_src.lower()
+    assert "pretend" not in agent_src.lower()
+    assert "google" in agent_src   # Gemini SDK import
+    assert "my-agent" in (target / "README.md").read_text()

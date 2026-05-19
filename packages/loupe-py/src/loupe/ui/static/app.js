@@ -196,7 +196,7 @@ function renderTraceList() {
     li.style.fontSize = "var(--t-sm)";
     li.style.borderLeft = "none";
     if (state.traces.length === 0) {
-      li.innerHTML = `<div style="line-height:1.55">No traces yet.<br><span style="color:var(--ink-4)">Try <code style="color:var(--amber)">loupe demo</code> to seed samples.</span></div>`;
+      li.innerHTML = `<div style="line-height:1.55">No traces yet.<br><span style="color:var(--ink-4)">Scaffold one with <code style="color:var(--amber)">loupe init my-agent</code>.</span></div>`;
     } else {
       li.textContent = "No matches.";
     }
