@@ -510,7 +510,18 @@ def annotations_cmd(trace_id: str) -> None:
 
 @app.command("attribute")
 def attribute(
-    trace_id: str,
+    trace_id: str = typer.Argument(
+        "",
+        help="Trace id (or prefix). Omit and use --all to attribute every trace.",
+    ),
+    all_traces: bool = typer.Option(
+        False, "--all",
+        help="Walk every captured trace; skip steps already attributed unless --force.",
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Re-run attribution on steps that already have it. Default skips them.",
+    ),
     backend: str = typer.Option(
         "mock",
         "--backend",
@@ -539,24 +550,47 @@ def attribute(
         help="Annotator id stored alongside the attribution.",
     ),
 ) -> None:
-    """Compute circuit attribution for every llm-call step in a trace.
+    """Compute circuit attribution for llm-call steps.
+
+    Two modes:
+
+    * ``loupe attribute <trace>``  — attribute one trace.
+    * ``loupe attribute --all``    — attribute every captured trace, skipping
+                                     steps that already have an attribution
+                                     (use ``--force`` to re-run them).
 
     Results are stored in each step's annotation under
-    ``circuit_attribution`` — alongside any human tags. Existing
-    annotations are updated in place; existing tags + notes are
-    preserved.
+    ``circuit_attribution`` — alongside any human tags. Existing tags +
+    notes are preserved on re-run.
 
     Backends:
-      - ``mock``: deterministic synthetic features, no deps. Use this
-        to validate the plumbing end-to-end.
-      - ``sae``: real SAE attribution. Requires ``pip install
-        'loupe[interp]'`` and a model/SAE pair.
+      * ``mock``: deterministic synthetic features, no deps.
+      * ``sae``:  real SAE attribution. Requires ``pip install 'loupe[interp]'``
+                  and a model/SAE pair.
     """
     from loupe.attribution import attribute_trace, make_attributor
 
-    path = _find_trace(trace_id)
-    if path is None:
+    if all_traces and trace_id:
+        console.print(Text("  ✗ pass either <trace> OR --all, not both.", style=RED))
         raise typer.Exit(code=1)
+
+    if not all_traces and not trace_id:
+        console.print(Text("  ✗ pass a trace id, or use --all.", style=RED))
+        raise typer.Exit(code=1)
+
+    # Resolve the target list of paths exactly once so error paths
+    # don't accidentally make N partial passes over the disk.
+    if all_traces:
+        traces_dir = _default_dir() / "traces"
+        target_paths = sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []
+        if not target_paths:
+            console.print(Text("  No captured traces yet.", style=DIM))
+            return
+    else:
+        single = _find_trace(trace_id)
+        if single is None:
+            raise typer.Exit(code=1)
+        target_paths = [single]
 
     try:
         attributor = make_attributor(
@@ -566,19 +600,50 @@ def attribute(
         console.print(Text(f"  ✗ {exc}", style=RED))
         raise typer.Exit(code=1) from None
 
-    with spinner(f"Attributing via {attributor.name} ({attributor.model})"):
-        try:
-            results = attribute_trace(
-                path, attributor, only_failing=only_failing,
-            )
-        except NotImplementedError as exc:
-            console.print(Text(f"  ✗ {exc}", style=RED))
-            raise typer.Exit(code=1) from None
-        except Exception as exc:  # noqa: BLE001
-            console.print(Text(f"  ✗ attribution failed: {exc}", style=RED))
-            raise typer.Exit(code=1) from None
+    store = AnnotationStore()
+    total_attributed = 0
+    total_skipped = 0
+    first_result: tuple[str, Any] | None = None
 
-    if not results:
+    label = f"Attributing {len(target_paths)} trace(s) via {attributor.name}"
+    with spinner(label):
+        for path in target_paths:
+            try:
+                results = attribute_trace(
+                    path, attributor, only_failing=only_failing,
+                )
+            except NotImplementedError as exc:
+                console.print(Text(f"  ✗ {exc}", style=RED))
+                raise typer.Exit(code=1) from None
+            except Exception as exc:  # noqa: BLE001
+                console.print(
+                    Text(f"  ✗ {path.stem[:12]} failed: {exc}", style=RED)
+                )
+                continue
+
+            existing = {a.step_id: a for a in store.load(path.stem)}
+            for step_id, result in results:
+                if step_id in existing:
+                    ann = existing[step_id]
+                    has_attr = bool(ann.circuit_attribution)
+                    if has_attr and not force:
+                        total_skipped += 1
+                        continue
+                    ann.circuit_attribution = result.to_json_dict()  # type: ignore[assignment]
+                else:
+                    ann = Annotation(
+                        trace_id=path.stem,
+                        step_id=step_id,
+                        failure_category="other",  # type: ignore[arg-type]
+                        annotator=annotator,
+                        circuit_attribution=result.to_json_dict(),  # type: ignore[arg-type]
+                    )
+                store.add(ann)
+                total_attributed += 1
+                if first_result is None:
+                    first_result = (step_id, result)
+
+    if total_attributed == 0 and total_skipped == 0:
         console.print(
             Text("  No llm-call steps eligible for attribution.", style=DIM)
         )
@@ -586,46 +651,29 @@ def attribute(
             console.print(Text("  (try without --only-failing)", style=DIM))
         return
 
-    # Persist into the annotation store: merge into existing annotation
-    # for the step if one exists, else create one with category 'other'
-    # so attributions can live without a prior human tag.
-    store = AnnotationStore()
-    existing = {a.step_id: a for a in store.load(path.stem)}
-    saved = 0
-    for step_id, result in results:
-        if step_id in existing:
-            ann = existing[step_id]
-            ann.circuit_attribution = result.to_json_dict()  # type: ignore[assignment]
-        else:
-            ann = Annotation(
-                trace_id=path.stem,
-                step_id=step_id,
-                failure_category="other",  # type: ignore[arg-type]
-                annotator=annotator,
-                circuit_attribution=result.to_json_dict(),  # type: ignore[arg-type]
-            )
-        store.add(ann)
-        saved += 1
-
     console.print()
-    console.print(
+    summary_line = (
         Text("  ✓ ", style=GREEN)
-        + Text(f"attributed {saved} step(s)", style=INK)
+        + Text(f"attributed {total_attributed} step(s)", style=INK)
         + Text(f"  ·  {attributor.name} / {attributor.model}", style=DIM)
     )
+    if total_skipped:
+        summary_line += Text(f"  ·  {total_skipped} skipped (already attributed)", style=DIM)
+    console.print(summary_line)
     # Tiny preview so the user can see something concrete.
-    first_id, first_result = results[0]
-    feats = first_result.top_features[:3]
-    if feats:
-        console.print()
-        console.print(Text(f"  step {first_id[:12]} top features:", style=DIM))
-        for f in feats:
-            console.print(
-                Text("    ", style=DIM)
-                + Text(f"#{f.feature_id:>6}", style=AMBER)
-                + Text(f"  act={f.activation:.3f}", style=INK)
-                + Text(f"  {f.layer}", style=DIM)
-            )
+    if first_result is not None:
+        first_id, first_payload = first_result
+        feats = first_payload.top_features[:3]
+        if feats:
+            console.print()
+            console.print(Text(f"  step {first_id[:12]} top features:", style=DIM))
+            for f in feats:
+                console.print(
+                    Text("    ", style=DIM)
+                    + Text(f"#{f.feature_id:>6}", style=AMBER)
+                    + Text(f"  act={f.activation:.3f}", style=INK)
+                    + Text(f"  {f.layer}", style=DIM)
+                )
     console.print()
 
 
@@ -1443,6 +1491,159 @@ def providers() -> None:
         style=DIM,
     ))
     console.print()
+
+
+@app.command("cluster")
+def cluster(
+    category: str = typer.Option(
+        "", "--category", "-c",
+        help="Restrict to one failure category (hallucination, loop, …). "
+             "Omit to cluster across every annotated step.",
+    ),
+    top_k: int = typer.Option(
+        15, "--top-k",
+        help="How many top features to show (sorted by frequency).",
+    ),
+) -> None:
+    """Find the features that fire across many tagged failures.
+
+    This is the analytical primitive of the LoupeBench research workflow:
+    once you have N hand-tagged failures with circuit attribution, this
+    command shows which SAE features recur across them — and which are
+    *distinctive* to one category versus all others.
+
+    Output:
+      - frequency table: how often each feature fires in the filtered set
+      - distinctiveness: features over-represented in the chosen
+        category relative to every other category, with a simple
+        log-ratio score. Computed only when --category is set.
+    """
+    import math
+    from collections import Counter
+
+    store = AnnotationStore()
+    all_annotations = store.all()
+
+    # Flatten into a list of (category, top_feature_ids) per annotation
+    # that actually has attribution.
+    rows: list[tuple[str, list[int]]] = []
+    for _trace_id, items in all_annotations.items():
+        for ann in items:
+            attr = ann.circuit_attribution or {}
+            feats = attr.get("top_features", []) if isinstance(attr, dict) else []
+            if not feats:
+                continue
+            ids = [
+                int(f["feature_id"]) for f in feats
+                if isinstance(f, dict) and "feature_id" in f
+            ]
+            if not ids:
+                continue
+            rows.append((ann.failure_category, ids))
+
+    if not rows:
+        console.print(
+            Text("  No annotated steps with circuit attribution yet.", style=DIM)
+        )
+        console.print(
+            hint("loupe attribute --all    attribute every captured trace first")
+        )
+        return
+
+    # Filter
+    if category:
+        in_cat = [r for r in rows if r[0] == category]
+        out_cat = [r for r in rows if r[0] != category]
+    else:
+        in_cat = rows
+        out_cat = []
+
+    if not in_cat:
+        console.print(
+            Text(f"  No annotated steps in category {category!r}.", style=RED)
+        )
+        return
+
+    # Count features inside the filtered set.
+    in_counter: Counter[int] = Counter()
+    for _cat, ids in in_cat:
+        for fid in ids:
+            in_counter[fid] += 1
+
+    # Frequency table
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    title = (
+        f"cluster · {category}  ({len(in_cat)} annotation(s))"
+        if category else f"cluster · all categories  ({len(in_cat)} annotation(s))"
+    )
+    freq_table = Table(
+        show_header=True,
+        header_style=f"dim {DIM}",
+        box=SIMPLE,
+        padding=(0, 2),
+        title=Text(title, style=f"italic {AMBER}"),
+        title_justify="left",
+    )
+    freq_table.add_column("feature_id", style=AMBER, no_wrap=True, justify="right")
+    freq_table.add_column("hits", style=INK, no_wrap=True, justify="right")
+    freq_table.add_column("share", style=DIM, no_wrap=True, justify="right")
+
+    for fid, hits in in_counter.most_common(top_k):
+        share = hits / len(in_cat)
+        freq_table.add_row(f"#{fid}", str(hits), f"{share:.0%}")
+
+    # Distinctiveness: features over-represented in this category vs others.
+    distinct_table: Table | None = None
+    if category and out_cat:
+        out_counter: Counter[int] = Counter()
+        for _cat, ids in out_cat:
+            for fid in ids:
+                out_counter[fid] += 1
+
+        # Smoothed log-ratio. +1 smoothing avoids log(0) and handles the
+        # "feature appears in zero out-of-category annotations" case.
+        scores: list[tuple[int, float, int, int]] = []
+        for fid, hits in in_counter.items():
+            in_rate = (hits + 1) / (len(in_cat) + 1)
+            out_rate = (out_counter.get(fid, 0) + 1) / (len(out_cat) + 1)
+            score = math.log(in_rate / out_rate)
+            scores.append((fid, score, hits, out_counter.get(fid, 0)))
+        scores.sort(key=lambda x: x[1], reverse=True)
+
+        distinct_table = Table(
+            show_header=True,
+            header_style=f"dim {DIM}",
+            box=SIMPLE,
+            padding=(0, 2),
+            title=Text(
+                f"distinctive features  (vs {len(out_cat)} other-category annotation(s))",
+                style=f"italic {AMBER}",
+            ),
+            title_justify="left",
+        )
+        distinct_table.add_column("feature_id", style=AMBER, no_wrap=True, justify="right")
+        distinct_table.add_column("in", style=INK, no_wrap=True, justify="right")
+        distinct_table.add_column("out", style=DIM, no_wrap=True, justify="right")
+        distinct_table.add_column("score", style=GREEN, no_wrap=True, justify="right")
+        for fid, score, hits_in, hits_out in scores[:top_k]:
+            if score <= 0:
+                # Stop printing once we cross over into "not distinctive"
+                break
+            distinct_table.add_row(
+                f"#{fid}", str(hits_in), str(hits_out), f"{score:+.2f}",
+            )
+
+    blocks: list[object] = [
+        banner("failure-feature cluster", version=__version__),
+        Text(),
+        freq_table,
+    ]
+    if distinct_table is not None:
+        blocks.extend([Text(), distinct_table])
+
+    render_padded(*blocks)
 
 
 @app.command("version")

@@ -935,6 +935,90 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
+/* ----- attribution card ----- *
+   Rendered below the annotation card when a step has circuit_attribution.
+   Visual rhythm: less amber than the annotation card (which is the
+   primary action surface), more analytical — feature ids in mono, a
+   thin bar showing relative activation. */
+.attr-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid rgba(124, 180, 212, 0.6);   /* cool blue accent */
+  border-radius: var(--radius);
+  padding: var(--s-4) var(--s-5);
+  margin: var(--s-3) 0 var(--s-5);
+}
+.attr-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+.attr-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--blue);
+  font-weight: 600;
+}
+.attr-prov {
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: var(--t-xs);
+  color: var(--ink-3);
+}
+.attr-summary {
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  margin-bottom: var(--s-3);
+  line-height: 1.55;
+}
+.attr-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+}
+.attr-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 64px auto;
+  align-items: center;
+  gap: var(--s-3);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: var(--t-sm);
+}
+.attr-id {
+  color: var(--amber);
+  text-align: right;
+}
+.attr-bar {
+  display: block;
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.attr-bar-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgba(124, 180, 212, 0.4),
+    rgba(124, 180, 212, 0.95)
+  );
+  border-radius: 3px;
+}
+.attr-act {
+  color: var(--ink-2);
+  text-align: right;
+}
+.attr-layer {
+  color: var(--ink-3);
+  font-size: var(--t-xs);
+}
+
 /* ----- annotation card ----- */
 .annot-card {
   background: var(--amber-bg);

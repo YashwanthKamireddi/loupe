@@ -33,7 +33,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import IO, Literal
+from typing import IO, Any, Literal
 
 from loupe.store import _default_dir
 
@@ -65,7 +65,11 @@ class Annotation:
     severity: Literal["low", "medium", "high", "critical"] = "medium"
     annotator: str = ""
     tags: list[str] = field(default_factory=list)
-    circuit_attribution: dict[str, list[int]] = field(default_factory=dict)
+    # Free-form JSON. Today populated by loupe.attribution.AttributionResult.to_json_dict()
+    # — keys include model, sae, method, top_features (list of dicts), summary,
+    # attributed_at. Kept as dict[str, Any] so the schema can evolve without
+    # breaking already-stored annotations.
+    circuit_attribution: dict[str, Any] = field(default_factory=dict)
 
 
 class AnnotationStore:

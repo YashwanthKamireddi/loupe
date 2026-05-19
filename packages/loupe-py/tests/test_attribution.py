@@ -265,3 +265,153 @@ def test_attribution_result_default_method_is_set() -> None:
     r = AttributionResult(model="m", sae="s", method="mock-hash-topk")
     assert r.method
     assert r.top_features == []
+
+
+# ---------------------------------------------------------------------------
+# CLI: --all bulk attribute
+# ---------------------------------------------------------------------------
+
+
+def test_attribute_all_walks_every_trace(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    a = _seed_trace_with_llm_call(loupe_home)
+    b = _seed_trace_with_llm_call(loupe_home)
+    res = runner.invoke(app, ["attribute", "--all"])
+    assert res.exit_code == 0, res.output
+    assert "attributed 2 step(s)" in res.output
+
+    assert len(AnnotationStore().load(a)) == 1
+    assert len(AnnotationStore().load(b)) == 1
+
+
+def test_attribute_all_skips_already_attributed(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    a = _seed_trace_with_llm_call(loupe_home)
+    # First pass: attribute it.
+    runner.invoke(app, ["attribute", a[:12]])
+    # Second pass with --all should skip it.
+    res = runner.invoke(app, ["attribute", "--all"])
+    assert res.exit_code == 0
+    assert "skipped" in res.output
+
+
+def test_attribute_all_with_force_reattributes(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    a = _seed_trace_with_llm_call(loupe_home)
+    runner.invoke(app, ["attribute", a[:12]])
+    res = runner.invoke(app, ["attribute", "--all", "--force"])
+    assert res.exit_code == 0
+    assert "skipped" not in res.output
+
+
+def test_attribute_rejects_trace_id_with_all_flag(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    a = _seed_trace_with_llm_call(loupe_home)
+    res = runner.invoke(app, ["attribute", a[:12], "--all"])
+    assert res.exit_code == 1
+    assert "not both" in res.output
+
+
+def test_attribute_requires_id_or_all(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    res = runner.invoke(app, ["attribute"])
+    assert res.exit_code == 1
+    assert "trace id" in res.output or "--all" in res.output
+
+
+# ---------------------------------------------------------------------------
+# CLI: loupe cluster
+# ---------------------------------------------------------------------------
+
+
+def test_cluster_empty_home_prints_hint(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    res = runner.invoke(app, ["cluster"])
+    assert res.exit_code == 0
+    assert "No annotated steps" in res.output
+
+
+def test_cluster_shows_frequency_table_across_all(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    a = _seed_trace_with_llm_call(loupe_home)
+    b = _seed_trace_with_llm_call(loupe_home)
+    runner.invoke(app, ["attribute", a[:12]])
+    runner.invoke(app, ["attribute", b[:12]])
+
+    res = runner.invoke(app, ["cluster"])
+    assert res.exit_code == 0, res.output
+    assert "cluster" in res.output
+    assert "feature_id" in res.output
+    assert "hits" in res.output
+
+
+def test_cluster_filter_by_category(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """When --category is set, only annotations of that category are clustered.
+
+    The seeded steps default to category 'other' (loupe attribute creates the
+    annotation with that category). So requesting category=hallucination
+    should yield zero rows.
+    """
+    a = _seed_trace_with_llm_call(loupe_home)
+    runner.invoke(app, ["attribute", a[:12]])
+
+    res = runner.invoke(app, ["cluster", "--category", "hallucination"])
+    assert res.exit_code == 0
+    assert "No annotated steps in category" in res.output
+
+
+def test_cluster_distinctiveness_table_renders(
+    runner: CliRunner, loupe_home: Path
+) -> None:
+    """With annotations in two different categories, --category triggers
+    the distinctiveness table and shows the 'in' / 'out' / 'score' columns."""
+    a = _seed_trace_with_llm_call(loupe_home)
+    b = _seed_trace_with_llm_call(loupe_home)
+    runner.invoke(app, ["attribute", a[:12]])
+    runner.invoke(app, ["attribute", b[:12]])
+
+    # Move one annotation into the 'loop' category.
+    store = AnnotationStore()
+    items_a = store.load(a)
+    assert items_a
+    item = items_a[0]
+    # Mutate then re-save via store.add (which replaces by step_id).
+    item.failure_category = "loop"  # type: ignore[assignment]
+    store.add(item)
+
+    res = runner.invoke(app, ["cluster", "--category", "loop"])
+    assert res.exit_code == 0, res.output
+    assert "distinctive" in res.output
+
+
+# ---------------------------------------------------------------------------
+# Dashboard: circuit_attribution renders in the step detail pane
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_app_js_contains_attribution_renderer() -> None:
+    """The dashboard JS must define renderAttributionCard. This is the
+    plumbing test — actual visual rendering is exercised by hand. We assert
+    the function exists and is invoked from renderAnnotationCard so the
+    panel actually appears when an annotation carries circuit_attribution."""
+    from loupe.ui.server import STATIC_DIR
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert "function renderAttributionCard" in js
+    assert "${renderAttributionCard" in js, \
+        "renderAttributionCard must be wired into renderAnnotationCard"
+
+
+def test_dashboard_style_css_contains_attribution_styles() -> None:
+    from loupe.ui.server import STATIC_DIR
+    css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    assert ".attr-card" in css
+    assert ".attr-bar-fill" in css

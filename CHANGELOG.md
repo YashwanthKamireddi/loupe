@@ -7,6 +7,49 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Real SAE backend implementation (forward pass + sae-lens projection)
 
+## [0.0.40] — 2026-05-19  ·  Attribution: dashboard panel + bulk + cluster
+
+Three additions that turn the v0.0.39 attribution foundation into a
+genuinely useful research tool.
+
+### Dashboard — circuit_attribution panel
+When a step's annotation carries a ``circuit_attribution`` field, the
+step detail pane now renders a dedicated **Circuit attribution** card
+below the LoupeBench annotation: top-K features with horizontal bars
+sized by relative activation, the model/SAE provenance line, and the
+attributor's free-form summary. Cool-blue accent so it's visually
+distinct from the amber tagging card.
+
+### `loupe attribute --all` — bulk
+Walk every captured trace and attribute every llm-call step in one go.
+Default behavior **skips** steps that already have an attribution;
+``--force`` re-runs them. Output is a single spinner + one summary
+line: ``✓ attributed N step(s) ·  mock / mock-model · K skipped``.
+
+### `loupe cluster` — failure-feature analysis
+The analytical primitive of the LoupeBench research workflow:
+
+```
+loupe cluster                        # across every annotated step
+loupe cluster --category hallucination
+loupe cluster --category loop --top-k 25
+```
+
+Outputs:
+- **Frequency table** — which feature ids fire across the filtered
+  annotations, with hits + share %.
+- **Distinctive features** — when ``--category`` is set, a second
+  table shows features over-represented in this category vs every
+  other, scored by a smoothed log-ratio (``+1`` smoothing so zero-out
+  cases don't explode).
+
+### Tests
+- 11 new (5 for ``--all``/``--force``, 4 for ``cluster``, 2 for
+  dashboard markup presence).
+- ``Annotation.circuit_attribution`` re-typed as ``dict[str, Any]`` so
+  the rich AttributionResult shape type-checks cleanly.
+- **248 Python + 37 TypeScript = 285 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.39] — 2026-05-19  ·  Circuit attribution foundation
 
 The v0.2 research-artifact foundation lands. Loupe can now attribute

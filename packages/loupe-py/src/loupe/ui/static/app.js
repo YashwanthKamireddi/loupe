@@ -412,6 +412,51 @@ function renderAnnotationCard(ann) {
         <button type="button" class="btn-ghost" data-action="untag">Remove tag</button>
       </div>
     </div>
+    ${renderAttributionCard(ann.circuit_attribution)}
+  `;
+}
+
+function renderAttributionCard(attr) {
+  // Defensive: the field may be empty {}, undefined, or a full shape from
+  // loupe.attribution.AttributionResult.to_json_dict(). Render only when
+  // we have at least one feature to show.
+  if (!attr || typeof attr !== "object") return "";
+  const features = Array.isArray(attr.top_features) ? attr.top_features : [];
+  if (features.length === 0) return "";
+
+  const maxAct = features.reduce(
+    (m, f) => (typeof f.activation === "number" && f.activation > m ? f.activation : m),
+    0,
+  ) || 1;
+
+  const rows = features.map((f) => {
+    const pct = Math.max(0, Math.min(100, (Number(f.activation) / maxAct) * 100));
+    const layerLabel = f.layer ? escapeHtml(f.layer) : "";
+    return `
+      <li class="attr-row">
+        <span class="attr-id">#${escapeHtml(String(f.feature_id))}</span>
+        <span class="attr-bar"><span class="attr-bar-fill" style="width:${pct.toFixed(1)}%"></span></span>
+        <span class="attr-act">${Number(f.activation).toFixed(3)}</span>
+        <span class="attr-layer">${layerLabel}</span>
+      </li>
+    `;
+  }).join("");
+
+  const summary = attr.summary ? `<div class="attr-summary">${escapeHtml(attr.summary)}</div>` : "";
+  const provenance = [attr.model, attr.sae, attr.method]
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join(" · ");
+
+  return `
+    <div class="attr-card">
+      <div class="attr-head">
+        <span class="attr-eyebrow">Circuit attribution</span>
+        <span class="attr-prov">${provenance}</span>
+      </div>
+      ${summary}
+      <ol class="attr-list">${rows}</ol>
+    </div>
   `;
 }
 
