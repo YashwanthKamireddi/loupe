@@ -560,9 +560,27 @@ async function refresh() {
 
 /* ----- input + keyboard -------------------------------------------------- */
 
+// Debounced server-side search. The local `state.filter` still drives
+// instant client-side rendering against the currently-loaded trace list,
+// AND we re-fetch from /api/traces?q=... after a 200ms quiet window so
+// step-content matches (kind / name / error) show up too.
+let _searchTimer = 0;
 els.search.addEventListener("input", (e) => {
   state.filter = e.target.value || "";
   renderTraceList();
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(async () => {
+    const q = state.filter.trim();
+    const url = q ? `/api/traces?q=${encodeURIComponent(q)}` : "/api/traces";
+    try {
+      state.traces = await (await fetch(url)).json();
+    } catch (err) {
+      console.error(err);
+      return;
+    }
+    renderTraceList();
+    updateEmptyState();
+  }, 200);
 });
 
 // Status filter chips

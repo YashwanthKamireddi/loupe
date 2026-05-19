@@ -155,3 +155,62 @@ def test_ingest_rejects_oversized_content_length_pre_read(loupe_home: Path) -> N
         headers={"content-length": str(100 * 1024 * 1024)},
     )
     assert res.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# /api/traces?q=… — server-side search across trace header + step content
+# ---------------------------------------------------------------------------
+
+
+def _make_named_trace(home: Path, name: str, step_kind: str = "llm-call",
+                      step_name: str = "fake-model") -> None:
+    store = JSONLStore(root=home / "traces")
+    from loupe import record_step as _rs
+    from loupe import trace as _t
+
+    @_t(name=name, framework="test", store=store)
+    def agent() -> None:
+        _rs(step_kind, step_name)
+
+    agent()
+
+
+def test_list_traces_search_matches_header(loupe_home: Path) -> None:
+    _make_named_trace(loupe_home, "alpha-agent")
+    _make_named_trace(loupe_home, "beta-bot")
+    client = TestClient(create_app())
+    data = client.get("/api/traces?q=alpha").json()
+    assert len(data) == 1
+    assert data[0]["name"] == "alpha-agent"
+    assert data[0]["match"]["header"] is True
+
+
+def test_list_traces_search_matches_step_content(loupe_home: Path) -> None:
+    """A query that doesn't match the header SHOULD match step names."""
+    _make_named_trace(loupe_home, "x-agent", step_kind="llm-call",
+                      step_name="anthropic:claude-haiku-4-5")
+    _make_named_trace(loupe_home, "y-agent", step_kind="llm-call",
+                      step_name="openai:gpt-4o-mini")
+    client = TestClient(create_app())
+    data = client.get("/api/traces?q=claude").json()
+    assert len(data) == 1
+    assert data[0]["name"] == "x-agent"
+    assert data[0]["match"]["steps"] is True
+    assert data[0]["match"]["header"] is False
+
+
+def test_list_traces_search_no_match_returns_empty(loupe_home: Path) -> None:
+    _make_named_trace(loupe_home, "the-only-trace")
+    client = TestClient(create_app())
+    data = client.get("/api/traces?q=nonsense").json()
+    assert data == []
+
+
+def test_list_traces_search_empty_query_returns_all(loupe_home: Path) -> None:
+    """An empty q means "no filter" — return every trace, no match field."""
+    _make_named_trace(loupe_home, "x")
+    _make_named_trace(loupe_home, "y")
+    client = TestClient(create_app())
+    data = client.get("/api/traces?q=").json()
+    assert len(data) == 2
+    assert "match" not in data[0]   # no match metadata when not filtering

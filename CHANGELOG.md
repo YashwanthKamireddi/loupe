@@ -7,6 +7,54 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.47] — 2026-05-19  ·  Dashboard search + tighter error hints
+
+### Dashboard — search now spans step content, not just headers
+
+The sidebar search used to match only on trace name / framework /
+trace_id. Now ``GET /api/traces?q=<query>`` filters server-side
+across **every step's kind, name, and error text** too — so a query
+like ``"429"`` surfaces every trace whose Gemini call rate-limited,
+and ``"claude-haiku"`` finds runs you forgot the name of.
+
+- Server-side filter at ``/api/traces?q=…``; case-insensitive
+  substring match. Returns a ``match`` object per trace
+  (``{"header": bool, "steps": bool}``) so the client can surface
+  *why* a trace matched if we want a richer UI later.
+- Client-side: debounced 200ms refetch on input. Local filter still
+  runs against the cached list for instant feedback.
+
+### CLI error paths now propose the next command
+
+``_find_trace`` is the workhorse behind ``show / report / verify /
+tag / annotations / diff / attribute / replay``. Its "no match" path
+used to say `No trace matching <id>` and stop. Now it also prints
+the next command, picked by whether the user has any traces yet:
+
+```
+loupe show abc123
+  ✗ No trace matching 'abc123'
+  → loupe list             see every captured trace
+```
+
+```
+loupe show abc123                    # zero traces in home
+  ✗ No trace matching 'abc123'
+  → loupe init my-agent    scaffold a real starter project
+  → python agent.py 'q'    capture your first trace
+```
+
+Same treatment for:
+- ``loupe init <name>`` into a non-empty dir — now suggests a new
+  name + the explicit ``rm -rf`` if they really meant it.
+- ``loupe diff`` against a malformed trace — points at ``loupe verify``.
+
+### Tests
+
+- 4 new tests for ``/api/traces?q=…``: header match, step-content
+  match, no-match → empty, empty-q returns all (no match metadata).
+- **289 Python + 37 TypeScript = 326 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.46] — 2026-05-19  ·  `--json` output for list / stats / show
 
 Three commands now have a ``--json`` flag so real users scripting

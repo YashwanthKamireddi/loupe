@@ -852,7 +852,9 @@ def init(
     """Scaffold a Loupe-instrumented starter project."""
     project_dir = target / name if target == Path(".") else target
     if project_dir.exists() and any(project_dir.iterdir()):
-        console.print(Text(f"  Refusing to write into non-empty {project_dir}", style=RED))
+        console.print(Text(f"  ✗ Refusing to write into non-empty {project_dir}", style=RED))
+        console.print(hint(f"loupe init {name}-new        scaffold under a different name"))
+        console.print(hint(f"rm -rf {project_dir}    if you really want to overwrite"))
         raise typer.Exit(code=1)
     files = scaffold(project_dir, name)
     console.print()
@@ -1098,7 +1100,8 @@ def diff_cmd(
     header_a, steps_a = _load_trace(path_a)
     header_b, steps_b = _load_trace(path_b)
     if header_a is None or header_b is None:
-        console.print(Text("  malformed trace", style=RED))
+        console.print(Text("  ✗ malformed trace", style=RED))
+        console.print(hint(f"loupe verify {path_a.stem[:12]}   check the schema"))
         raise typer.Exit(code=1)
 
     rows: list[tuple[str, str]] = []
@@ -2271,13 +2274,26 @@ def _find_schema_file() -> Path | None:
 
 
 def _find_trace(trace_id: str) -> Path | None:
+    """Resolve a trace prefix to a JSONL file, with actionable error hints.
+
+    Reasons this can return None:
+      - The id doesn't match any file → we suggest `loupe list`.
+      - The traces directory doesn't exist → we point at `loupe init`.
+    """
     traces_dir = _default_dir() / "traces"
-    matches = list(traces_dir.glob(f"{trace_id}*.jsonl"))
+    matches = list(traces_dir.glob(f"{trace_id}*.jsonl")) if traces_dir.exists() else []
     if not matches:
-        console.print(Text(f"  No trace matching {trace_id}", style=RED))
+        console.print(Text(f"  ✗ No trace matching '{trace_id}'", style=RED))
+        any_traces = traces_dir.exists() and any(traces_dir.glob("*.jsonl"))
+        if any_traces:
+            console.print(hint("loupe list             see every captured trace"))
+        else:
+            console.print(hint("loupe init my-agent    scaffold a real starter project"))
+            console.print(hint("python agent.py 'q'    capture your first trace"))
         return None
     if len(matches) > 1:
         console.print(Text(f"  Multiple matches; picking {matches[0].stem}", style=AMBER))
+        console.print(Text("  pass a longer prefix to disambiguate.", style=DIM))
     return matches[0]
 
 

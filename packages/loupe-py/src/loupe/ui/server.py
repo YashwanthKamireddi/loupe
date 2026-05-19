@@ -148,7 +148,13 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/traces")
-    def list_traces() -> JSONResponse:
+    def list_traces(q: str = "") -> JSONResponse:
+        """List traces. When ``q`` is given, filter by trace header AND
+        step content (kind / name / error). Case-insensitive substring
+        match. Returns header + ``match`` metadata so the client can
+        surface *why* a trace matched.
+        """
+        query = q.strip().lower()
         items: list[dict[str, Any]] = []
         files = sorted(traces_dir().glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
         all_annotations = ann_store().all()
@@ -156,9 +162,46 @@ def create_app() -> FastAPI:
             header = _read_header(file)
             if header is None:
                 continue
-            steps_count = max(0, sum(1 for _ in file.open("r", encoding="utf-8")) - 1)
+            steps_count = 0
+            match_in_header = False
+            match_in_steps = False
+            if query:
+                # Cheap header check first.
+                hay = " ".join([
+                    str(header.get("name") or ""),
+                    str(header.get("framework") or ""),
+                    str(header.get("trace_id") or ""),
+                ]).lower()
+                match_in_header = query in hay
+            # Walk the file once: count steps + (only when needed) match
+            # step kinds / names / error text.
+            with file.open("r", encoding="utf-8") as f:
+                next(f, None)   # skip the header line
+                for raw in f:
+                    steps_count += 1
+                    if not query or match_in_header or match_in_steps:
+                        # If we already matched, just keep counting steps.
+                        continue
+                    try:
+                        step = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    blob = " ".join([
+                        str(step.get("kind") or ""),
+                        str(step.get("name") or ""),
+                        str(step.get("error") or ""),
+                    ]).lower()
+                    if query in blob:
+                        match_in_steps = True
+            if query and not (match_in_header or match_in_steps):
+                continue
             header["step_count"] = steps_count
             header["annotation_count"] = len(all_annotations.get(header["trace_id"], []))
+            if query:
+                header["match"] = {
+                    "header": match_in_header,
+                    "steps": match_in_steps,
+                }
             items.append(header)
         return JSONResponse(items)
 
