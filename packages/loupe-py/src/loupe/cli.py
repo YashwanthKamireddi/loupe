@@ -3068,6 +3068,159 @@ def _extract_replay_inputs(
     return header, prompt, model, framework
 
 
+_EXPLAIN_TOPICS: dict[str, str] = {
+    "trace": (
+        "A captured agent run — one logical execution of a function "
+        "wrapped with @trace.\n\n"
+        "Lives on disk as a single JSONL file at\n"
+        "  ~/.loupe/traces/{trace_id}.jsonl\n\n"
+        "Line 0 is the header (id, name, framework, started_at,\n"
+        "ended_at, failure metadata). Lines 1..N are individual steps.\n\n"
+        "Once written, traces are immutable. Annotations and circuit\n"
+        "attribution are stored in sidecar files so the trace JSONL\n"
+        "stays a stable public contract — see docs/SPEC.md."
+    ),
+    "step": (
+        "A single event inside a trace. Each step has:\n"
+        "  kind         e.g. 'llm-call', 'tool-call', 'thought', 'error'\n"
+        "  name         short human label\n"
+        "  inputs       free-form dict (prompts, messages, etc.)\n"
+        "  outputs      free-form dict (responses, tokens, etc.)\n"
+        "  error        non-null if this step failed\n\n"
+        "Steps are emitted by:\n"
+        "  • record_step(...)            in your own code\n"
+        "  • framework integrations      automatic when you call patch_all()\n"
+        "  • universal-httpx capture     any HTTP call to a known provider"
+    ),
+    "tag": (
+        "A LoupeBench annotation on a failing step. Choose a category\n"
+        "(hallucination, loop, tool-misuse, etc.), add notes + mitigation,\n"
+        "and the tag persists alongside the trace.\n\n"
+        "Tagged failures can be bundled into a public benchmark via:\n"
+        "  loupe export --out my-bench.jsonl\n\n"
+        "Use the dashboard for the easiest tagging UI, or the CLI:\n"
+        "  loupe tag <trace-id> <step-id> <category>"
+    ),
+    "attribution": (
+        "SAE-based circuit attribution per llm-call step.\n\n"
+        "When you tag a step, you label WHAT went wrong. Circuit\n"
+        "attribution shows WHY at the level of mechanism — which\n"
+        "interpretable features in the model fired during that turn.\n\n"
+        "Backends:\n"
+        "  mock  deterministic synthetic features, no deps. CI / demos.\n"
+        "  sae   real GPT-2 small + sae-lens forward pass.\n"
+        "        Requires `pip install loupe[research]`.\n\n"
+        "Run with:\n"
+        "  loupe attribute <trace-id> --backend sae --explain"
+    ),
+    "cluster": (
+        "Cluster analysis across tagged failures — find which SAE\n"
+        "features recur across many failures of the same category,\n"
+        "and which are distinctive to one category vs others.\n\n"
+        "  loupe cluster --category hallucination\n\n"
+        "Output: a frequency table + (when --category is set) a\n"
+        "distinctiveness table scored by smoothed log-ratio."
+    ),
+    "index": (
+        "Embedded DuckDB index at ~/.loupe/index.duckdb that makes\n"
+        "loupe list / stats / verify --all O(1)-ish regardless of\n"
+        "how many traces you have on disk.\n\n"
+        "Source of truth stays the JSONL files. The index is a\n"
+        "derived view — rebuild any time with:\n"
+        "  loupe index rebuild\n\n"
+        "Background-thread upsert on every trace.save() so the hot\n"
+        "path stays under 100 µs / step. Set LOUPE_DISABLE_INDEX=1 to\n"
+        "opt out entirely (e.g. NFS mounts)."
+    ),
+    "replay": (
+        "Re-invoke a captured agent run with the same prompt + model.\n\n"
+        "Used to answer:\n"
+        "  • Reproducibility — does the bug repeat?\n"
+        "  • Model upgrades — did the bug get fixed by a newer model?\n"
+        "  • Prompt variants — edit --prompt, hold model constant.\n\n"
+        "The new run is captured as a separate trace; compare with:\n"
+        "  loupe diff <old> <new>"
+    ),
+    "config": (
+        "Loupe stores user-level settings (API keys, default model,\n"
+        "attribution backend) in ~/.loupe/config.toml.\n\n"
+        "Env vars still work as ephemeral overrides:\n"
+        "  GEMINI_API_KEY=... loupe ask 'hi'\n\n"
+        "Edit by hand or run `loupe setup` for the guided wizard."
+    ),
+    "wire-format": (
+        "The Loupe JSONL wire format is the public contract — language-\n"
+        "neutral, append-only, byte-stable across SDKs.\n\n"
+        "  Line 0: {\"_type\":\"trace\", trace_id, name, framework, ...}\n"
+        "  Line N: {\"_type\":\"step\",  step_id, kind, name, inputs, outputs, ...}\n\n"
+        "Schema: docs/loupe-trace.schema.json (Draft-2020-12).\n"
+        "POST any compliant payload to http://127.0.0.1:7860/api/traces\n"
+        "and it lands like a native capture — Go, Rust, curl, anything works."
+    ),
+    "providers": (
+        "Loupe captures LLM calls from 49 providers automatically.\n\n"
+        "Three layers:\n"
+        "  • Direct SDK integrations (Anthropic, OpenAI) — richest.\n"
+        "  • Universal-httpx — catches ANY known provider via host suffix.\n"
+        "  • Openai-compatible fallback — unknown hosts whose body\n"
+        "    looks like {messages,model} are captured as\n"
+        "    openai-compatible:<host>.\n\n"
+        "See the full list: loupe providers"
+    ),
+}
+
+
+@app.command("explain")
+def explain(
+    topic: str = typer.Argument(
+        "", help="Topic to explain. Run with no arg for the list.",
+    ),
+) -> None:
+    """Built-in topic explainer — no need to leave the terminal for docs.
+
+    Topics: trace, step, tag, attribution, cluster, index, replay,
+    config, wire-format, providers.
+    """
+    if not topic:
+        console.print(section("Topics"))
+        console.print()
+        for name in sorted(_EXPLAIN_TOPICS):
+            console.print(Text(f"    {name}", style=AMBER))
+        console.print()
+        console.print(hint("loupe explain <topic>    plain-English explanation"))
+        console.print()
+        return
+
+    topic_lower = topic.lower().strip()
+    if topic_lower not in _EXPLAIN_TOPICS:
+        import difflib
+        suggestions = difflib.get_close_matches(
+            topic_lower, list(_EXPLAIN_TOPICS.keys()), n=3, cutoff=0.55,
+        )
+        console.print()
+        console.print(Text(f"  ✗ unknown topic '{topic}'", style=RED))
+        if suggestions:
+            console.print(
+                Text("    Did you mean: ", style=DIM)
+                + Text(", ".join(suggestions), style=AMBER)
+                + Text("?", style=DIM)
+            )
+        console.print(hint("loupe explain    list every topic"))
+        console.print()
+        raise typer.Exit(code=1)
+
+    body = _EXPLAIN_TOPICS[topic_lower]
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text(topic_lower, style=f"bold {INK}")
+    )
+    console.print()
+    for line in body.split("\n"):
+        console.print(Text(f"  {line}", style=INK if line.strip() else DIM))
+    console.print()
+
+
 @app.command("version")
 def version() -> None:
     """Print Loupe version."""
@@ -3205,5 +3358,59 @@ def _read_header(path: Path) -> dict | None:
         return None
 
 
-if __name__ == "__main__":
+def _registered_command_names() -> list[str]:
+    """Best-effort introspection of every command name registered on the
+    top-level Typer app. Used by the typo-suggestion shim."""
+    names: list[str] = []
+    for entry in getattr(app, "registered_commands", []):
+        if entry.name:
+            names.append(entry.name)
+        elif entry.callback is not None:
+            names.append(entry.callback.__name__.replace("_", "-"))
+    for group in getattr(app, "registered_groups", []):
+        if group.name:
+            names.append(group.name)
+    return sorted(set(names))
+
+
+def main_entry() -> None:
+    """``loupe`` CLI entry point with friendly typo suggestions.
+
+    Behaviour:
+
+    - Unknown top-level subcommand → print
+      ``✗ unknown command 'sho'.  Did you mean: show?`` and exit 1
+      WITHOUT invoking Typer (which would otherwise emit a noisy
+      "Usage: …" block).
+    - Everything else is delegated to the regular Typer app.
+    """
+    if len(sys.argv) >= 2:
+        first = sys.argv[1]
+        if first and not first.startswith("-"):
+            known = _registered_command_names()
+            if first not in known:
+                import difflib
+                matches = difflib.get_close_matches(first, known, n=3, cutoff=0.55)
+                console.print()
+                console.print(Text(f"  ✗ unknown command '{first}'", style=RED))
+                if matches:
+                    if len(matches) == 1:
+                        console.print(
+                            Text("    Did you mean ", style=DIM)
+                            + Text(matches[0], style=AMBER)
+                            + Text("?", style=DIM)
+                        )
+                    else:
+                        console.print(
+                            Text("    Did you mean: ", style=DIM)
+                            + Text(", ".join(matches), style=AMBER)
+                            + Text("?", style=DIM)
+                        )
+                console.print(hint("loupe --help    full list of commands"))
+                console.print()
+                sys.exit(1)
     app()
+
+
+if __name__ == "__main__":
+    main_entry()

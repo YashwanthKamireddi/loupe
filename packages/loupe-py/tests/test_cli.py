@@ -763,6 +763,52 @@ def test_setup_short_circuits_when_already_configured(
 
 
 # ---------------------------------------------------------------------------
+# Did-you-mean typo suggestions + loupe explain
+# ---------------------------------------------------------------------------
+
+
+def test_typo_suggestion_offers_close_match() -> None:
+    """`loupe sho` should suggest `loupe show` and exit 1 cleanly."""
+    import subprocess
+    res = subprocess.run(
+        [str(Path(__file__).parent.parent / ".venv" / "bin" / "loupe"), "sho"],
+        capture_output=True, text=True,
+    )
+    assert res.returncode == 1
+    out = (res.stdout + res.stderr).lower()
+    assert "unknown command" in out
+    assert "did you mean" in out
+    assert "show" in out
+
+
+def test_explain_lists_topics_with_no_arg(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["explain"])
+    assert res.exit_code == 0
+    assert "trace" in res.output
+    assert "attribution" in res.output
+
+
+def test_explain_renders_topic_body(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["explain", "trace"])
+    assert res.exit_code == 0
+    assert "captured agent run" in res.output.lower()
+    assert "jsonl" in res.output.lower()
+
+
+def test_explain_unknown_topic_suggests_close_match(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["explain", "atribuion"])  # intentional typo
+    assert res.exit_code == 1
+    assert "unknown topic" in res.output
+    assert "attribution" in res.output
+
+
+# ---------------------------------------------------------------------------
 # loupe try / ask / chat / run — Phase 2 zero-code paths
 # ---------------------------------------------------------------------------
 

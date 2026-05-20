@@ -255,6 +255,49 @@ def test_disable_index_env_skips_upsert(
 # ---------------------------------------------------------------------------
 
 
+def test_list_traces_self_heals_when_files_are_deleted(loupe_home: Path) -> None:
+    """If JSONL files were removed bypassing ``loupe purge`` (e.g. someone
+    ran ``rm`` directly), the index has phantom rows. Calling
+    ``list_traces`` must detect this and rebuild silently — the next
+    ``loupe list`` shows the real on-disk state."""
+    trace_id_1 = _seed_one_trace(loupe_home, name="real-a")
+    trace_id_2 = _seed_one_trace(loupe_home, name="real-b")
+    idx = JSONLIndex(
+        db_path=loupe_home / "index.duckdb",
+        traces_dir=loupe_home / "traces",
+    )
+    idx.upsert_file(loupe_home / "traces" / f"{trace_id_1}.jsonl")
+    idx.upsert_file(loupe_home / "traces" / f"{trace_id_2}.jsonl")
+    assert len(idx.list_traces()) == 2
+
+    # Delete both files behind the index's back (the bug-inducing path).
+    (loupe_home / "traces" / f"{trace_id_1}.jsonl").unlink()
+    (loupe_home / "traces" / f"{trace_id_2}.jsonl").unlink()
+
+    # Now list_traces should detect pollution (100% missing > 25%) and
+    # rebuild. After rebuild, no rows remain.
+    rows = idx.list_traces()
+    assert rows == [], "self-heal should have rebuilt the index empty"
+
+
+def test_list_traces_does_not_rebuild_when_clean(loupe_home: Path) -> None:
+    """Inverse: a clean index must NOT trigger rebuild on every call."""
+    trace_id = _seed_one_trace(loupe_home, name="clean-trace")
+    idx = JSONLIndex(
+        db_path=loupe_home / "index.duckdb",
+        traces_dir=loupe_home / "traces",
+    )
+    idx.upsert_file(loupe_home / "traces" / f"{trace_id}.jsonl")
+
+    # Track whether rebuild() gets called by replacing it.
+    rebuilt = []
+    orig_rebuild = idx.rebuild
+    idx.rebuild = lambda: (rebuilt.append(True), orig_rebuild())[1]  # type: ignore[method-assign]
+    rows = idx.list_traces()
+    assert len(rows) == 1
+    assert not rebuilt, "clean index should NOT trigger rebuild"
+
+
 def test_schema_version_mismatch_triggers_rebuild(loupe_home: Path) -> None:
     """If the on-disk index has an older schema_version, opening it must
     transparently rebuild — never throw."""

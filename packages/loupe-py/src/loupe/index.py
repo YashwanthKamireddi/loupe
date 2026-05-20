@@ -314,7 +314,21 @@ class JSONLIndex:
 
         On any error (missing index, locked, schema drift) we return ``[]``
         — the caller should detect that and fall back to a disk scan.
+
+        Self-healing: if the index has rows for traces whose JSONL file no
+        longer exists on disk (e.g. someone ran ``rm ~/.loupe/traces/*.jsonl``
+        bypassing ``loupe purge``), we auto-rebuild the index and re-run
+        the query. This stops the dashboard / CLI from showing phantom rows.
         """
+        rows = self._list_raw(limit=limit)
+        if rows and self._is_polluted(rows):
+            self.rebuild()
+            rows = self._list_raw(limit=limit)
+        return rows
+
+    def _list_raw(self, *, limit: int) -> list[TraceRow]:
+        """One DuckDB query → list[TraceRow]. No self-healing. Used by
+        the public :meth:`list_traces` and by health checks."""
         if duckdb is None or not self.db_path.exists():
             return []
         try:
@@ -322,7 +336,7 @@ class JSONLIndex:
         except Exception:  # noqa: BLE001
             return []
         try:
-            rows = conn.execute(
+            raw = conn.execute(
                 """
                 SELECT trace_id, name, framework, started_at, ended_at,
                        failed, error, step_count
@@ -348,8 +362,23 @@ class JSONLIndex:
                 error=r[6],
                 step_count=r[7],
             )
-            for r in rows
+            for r in raw
         ]
+
+    def _is_polluted(self, rows: list[TraceRow]) -> bool:
+        """Heuristic: more than 25 % of the indexed rows point at files
+        that don't exist on disk → the index is stale (often because
+        tests / a partial purge / a manual ``rm`` left it inconsistent).
+
+        Sampling the first 20 rows keeps this O(1) regardless of total
+        index size; if the head is rotten, the tail is too.
+        """
+        if not rows or not self.traces_dir.exists():
+            return False
+        sample = rows[: min(20, len(rows))]
+        on_disk = {p.stem for p in self.traces_dir.glob("*.jsonl")}
+        missing = sum(1 for r in sample if r.trace_id not in on_disk)
+        return missing / max(1, len(sample)) > 0.25
 
     def stats(self) -> dict[str, Any] | None:
         """Aggregate counts, framework breakdown, median duration.

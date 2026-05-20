@@ -7,6 +7,74 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.50] — 2026-05-19  ·  UX overhaul — Phases 5 + 6: self-heal, did-you-mean, explain
+
+Three polish wins that match the friction bar set by gh / Stripe / Cargo CLIs.
+
+### Did-you-mean typo suggestions
+
+The CLI entry point now intercepts unknown top-level commands and
+prints actionable suggestions instead of Typer's default usage block:
+
+```
+$ loupe sho
+  ✗ unknown command 'sho'
+    Did you mean show?
+  → loupe --help    full list of commands
+
+$ loupe lst
+  ✗ unknown command 'lst'
+    Did you mean: list, cluster?
+  → loupe --help    full list of commands
+```
+
+Implementation: ``loupe.cli:main_entry`` wraps the Typer app. Unknown
+first argument → ``difflib.get_close_matches`` against the registered
+command list → print and exit 1. Everything else is delegated to the
+regular app, so help / flags / known commands all behave identically.
+
+### Self-healing index
+
+The DuckDB index auto-rebuilds itself when it detects pollution:
+
+- ``JSONLIndex.list_traces`` samples the first 20 indexed rows and
+  checks each against the on-disk JSONL set.
+- If >25 % of sampled rows point at files that no longer exist on
+  disk → silent rebuild → re-run the query.
+- This stops the dashboard / CLI from showing phantom rows after
+  someone removed files outside ``loupe purge`` (a real bug we hit
+  earlier this session).
+
+### `loupe explain <topic>`
+
+A built-in topic explainer so no one has to leave the terminal to
+read docs:
+
+```
+$ loupe explain
+  TOPICS
+    attribution   cluster      config        index       providers
+    replay        step         tag           trace       wire-format
+
+$ loupe explain attribution
+  ◉ attribution
+
+  SAE-based circuit attribution per llm-call step.
+  ...
+```
+
+10 topics covered: trace, step, tag, attribution, cluster, index,
+replay, config, wire-format, providers. Unknown topic → "did you
+mean?" suggestion, same pattern as the CLI.
+
+### Tests
+
+- 4 new tests: typo-suggestion subprocess check, explain lists topics,
+  explain renders a topic body, explain unknown-topic suggestion.
+- 2 new self-heal tests in ``test_index.py``: list_traces rebuilds when
+  files are deleted; clean index does NOT trigger rebuild on every call.
+- **317 Python + 37 TypeScript = 354 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.49] — 2026-05-19  ·  UX overhaul — Phase 2: ask / chat / run (zero code)
 
 Three new commands so a developer never has to write a single line of
