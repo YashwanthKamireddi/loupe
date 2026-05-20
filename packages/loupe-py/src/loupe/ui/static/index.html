@@ -41,6 +41,9 @@
         <button type="button" class="btn-ghost" id="help-button" title="Keyboard shortcuts (?)">
           <span>?</span> Shortcuts
         </button>
+        <button type="button" class="btn-ghost" id="tour-button" title="Replay the welcome tour">
+          <span>◉</span> Tour
+        </button>
       </div>
     </aside>
 
@@ -82,6 +85,24 @@
       </div>
     </section>
   </main>
+
+  <!-- Guided first-visit tour. Shown automatically once per browser
+       (gated by localStorage["loupe.tour.seen"]) and any time the user
+       clicks the "Tour" button in the sidebar footer. -->
+  <div class="tour-backdrop" id="tour" hidden aria-hidden="true">
+    <div class="tour-spot" id="tour-spot"></div>
+    <div class="tour-card" role="dialog" aria-labelledby="tour-title" aria-modal="true">
+      <div class="tour-progress" id="tour-progress"></div>
+      <h2 class="tour-title" id="tour-title"></h2>
+      <p class="tour-body" id="tour-body"></p>
+      <div class="tour-actions">
+        <button type="button" class="btn-ghost" id="tour-skip">Skip</button>
+        <span class="tour-step-label" id="tour-step-label"></span>
+        <button type="button" class="btn-ghost" id="tour-back" hidden>Back</button>
+        <button type="button" class="btn-primary" id="tour-next">Next</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-backdrop" id="help-modal" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">

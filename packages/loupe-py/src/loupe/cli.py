@@ -64,8 +64,17 @@ app = typer.Typer(
     help="A magnifying glass for your AI agent.",
     no_args_is_help=False,  # we provide our own welcome screen
     add_completion=False,
-    rich_markup_mode=None,
+    rich_markup_mode="rich",
 )
+
+# Help-panel groups — used by Typer's `rich_help_panel` to group commands
+# in ``loupe --help`` by purpose instead of alphabetically. Keeps the
+# 21-command surface scannable.
+_GROUP_GET_STARTED = "Get started"
+_GROUP_USE         = "Use it (no code required)"
+_GROUP_INSPECT     = "Inspect captured runs"
+_GROUP_ANALYZE     = "Analyze + benchmark"
+_GROUP_INFRA       = "Infrastructure"
 
 
 # ----------------------------------------------------------------------------
@@ -163,7 +172,7 @@ def _show_welcome() -> None:
     )
 
 
-@app.command("setup")
+@app.command("setup", rich_help_panel=_GROUP_GET_STARTED)
 def setup(
     provider: str = typer.Option(
         "", "--provider", "-p",
@@ -396,7 +405,7 @@ def _ping_provider(provider: str, api_key: str, model: str) -> tuple[bool, str]:
     return False, f"no ping implementation for {provider}"
 
 
-@app.command("try")
+@app.command("try", rich_help_panel=_GROUP_GET_STARTED)
 def try_cmd(
     model: str = typer.Option(
         "", "--model",
@@ -551,7 +560,7 @@ def _invoke_with_history(
 # ----------------------------------------------------------------------------
 
 
-@app.command("ask")
+@app.command("ask", rich_help_panel=_GROUP_USE)
 def ask(
     question: list[str] = typer.Argument(
         ..., help="Your question. Quote it if it contains shell metacharacters.",
@@ -658,7 +667,7 @@ def _run_single_capture(
     console.print()
 
 
-@app.command("chat")
+@app.command("chat", rich_help_panel=_GROUP_USE)
 def chat(
     provider: str = typer.Option(
         "", "--provider",
@@ -926,7 +935,7 @@ def _handle_chat_slash(
     return "continue"
 
 
-@app.command("run")
+@app.command("run", rich_help_panel=_GROUP_USE)
 def run_script(
     args: list[str] = typer.Argument(
         ...,
@@ -1014,7 +1023,7 @@ def run_script(
     console.print()
 
 
-@app.command("start")
+@app.command("start", rich_help_panel=_GROUP_INSPECT)
 def start(
     port: int = typer.Option(7860, "--port", "-p", help="Port for the dashboard"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't auto-open the browser"),
@@ -1050,7 +1059,7 @@ def start(
 # ----------------------------------------------------------------------------
 
 
-@app.command("list")
+@app.command("list", rich_help_panel=_GROUP_INSPECT)
 def list_traces(
     as_json: bool = typer.Option(
         False, "--json",
@@ -1205,7 +1214,7 @@ def list_traces(
     console.print()
 
 
-@app.command("show")
+@app.command("show", rich_help_panel=_GROUP_INSPECT)
 def show_trace(
     trace_id: str,
     as_json: bool = typer.Option(
@@ -1286,7 +1295,7 @@ def show_trace(
 # ----------------------------------------------------------------------------
 
 
-@app.command("ui")
+@app.command("ui", rich_help_panel=_GROUP_INSPECT)
 def ui(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
     port: int = typer.Option(7860, help="Bind port"),
@@ -1362,7 +1371,7 @@ def _resolve_port(host: str, start: int, *, search: bool) -> int | None:
 # ----------------------------------------------------------------------------
 
 
-@app.command("tag")
+@app.command("tag", rich_help_panel=_GROUP_ANALYZE)
 def tag(
     trace_id: str,
     step_id: str,
@@ -1409,7 +1418,7 @@ def tag(
     console.print(msg)
 
 
-@app.command("untag")
+@app.command("untag", rich_help_panel=_GROUP_ANALYZE)
 def untag(trace_id: str, step_id: str) -> None:
     """Remove a tag on a step."""
     path = _find_trace(trace_id)
@@ -1429,7 +1438,7 @@ def untag(trace_id: str, step_id: str) -> None:
         console.print(Text(f"  no tag found for {full_trace_id[:12]}/{full_step}", style=DIM))
 
 
-@app.command("annotations")
+@app.command("annotations", rich_help_panel=_GROUP_INSPECT)
 def annotations_cmd(trace_id: str) -> None:
     """List annotations on one trace."""
     path = _find_trace(trace_id)
@@ -1465,7 +1474,7 @@ def annotations_cmd(trace_id: str) -> None:
 # ----------------------------------------------------------------------------
 
 
-@app.command("attribute")
+@app.command("attribute", rich_help_panel=_GROUP_ANALYZE)
 def attribute(
     trace_id: str = typer.Argument(
         "",
@@ -1701,7 +1710,7 @@ def _attach_explanations(
 # ----------------------------------------------------------------------------
 
 
-@app.command("export")
+@app.command("export", rich_help_panel=_GROUP_ANALYZE)
 def export(
     out: Path = typer.Option(Path("loupe-bench.jsonl"), "--out", "-o"),
     license_: str = typer.Option("CC-BY-4.0", "--license"),
@@ -1717,7 +1726,7 @@ def export(
     )
 
 
-@app.command("report")
+@app.command("report", rich_help_panel=_GROUP_ANALYZE)
 def report(
     trace_id: str,
     out: Path | None = typer.Option(None, "--out", "-o"),
@@ -1741,7 +1750,7 @@ def report(
         typer.echo(text)
 
 
-@app.command("init")
+@app.command("init", rich_help_panel=_GROUP_GET_STARTED)
 def init(
     name: str = typer.Argument(..., help="Project / agent name"),
     target: Path = typer.Option(Path("."), "--dir", "-d"),
@@ -1774,7 +1783,7 @@ def init(
 # ----------------------------------------------------------------------------
 
 
-@app.command("doctor")
+@app.command("doctor", rich_help_panel=_GROUP_INFRA)
 def doctor(
     smoke: bool = typer.Option(
         False, "--smoke", help="Also run a full end-to-end smoke test in a tmp dir"
@@ -1979,7 +1988,7 @@ def _badge_failed() -> str:
     return f"[{RED}]✗[/{RED}] fail"
 
 
-@app.command("diff")
+@app.command("diff", rich_help_panel=_GROUP_INSPECT)
 def diff_cmd(
     a: str = typer.Argument(..., help="First trace id (or prefix)"),
     b: str = typer.Argument(..., help="Second trace id (or prefix)"),
@@ -2109,7 +2118,7 @@ def _duration_ms(header: dict) -> float | None:
     return max(0.0, (ended - started) * 1000)
 
 
-@app.command("stats")
+@app.command("stats", rich_help_panel=_GROUP_INSPECT)
 def stats(
     as_json: bool = typer.Option(
         False, "--json",
@@ -2259,7 +2268,7 @@ def stats(
     )
 
 
-@app.command("verify")
+@app.command("verify", rich_help_panel=_GROUP_INFRA)
 def verify(
     trace_id: str = typer.Argument(
         "",
@@ -2334,7 +2343,7 @@ def verify(
         raise typer.Exit(code=1)
 
 
-@app.command("purge")
+@app.command("purge", rich_help_panel=_GROUP_INFRA)
 def purge(
     older_than: str = typer.Option(
         ...,
@@ -2507,7 +2516,7 @@ def _validate_trace_file(
     return True, payload, None
 
 
-@app.command("providers")
+@app.command("providers", rich_help_panel=_GROUP_INFRA)
 def providers() -> None:
     """List every LLM provider the universal capture auto-detects."""
     from rich.box import SIMPLE
@@ -2557,7 +2566,7 @@ def providers() -> None:
     console.print()
 
 
-@app.command("cluster")
+@app.command("cluster", rich_help_panel=_GROUP_ANALYZE)
 def cluster(
     category: str = typer.Option(
         "", "--category", "-c",
@@ -2715,7 +2724,7 @@ def cluster(
 # ----------------------------------------------------------------------------
 
 
-@app.command("cost")
+@app.command("cost", rich_help_panel=_GROUP_ANALYZE)
 def cost(
     by_model: bool = typer.Option(
         False, "--by-model",
@@ -2866,7 +2875,7 @@ def cost(
 # ----------------------------------------------------------------------------
 
 
-@app.command("bench")
+@app.command("bench", rich_help_panel=_GROUP_ANALYZE)
 def bench(
     only_category: str = typer.Option(
         "", "--category", "-c",
@@ -3063,7 +3072,7 @@ def _replay_one_for_bench(
     return True, new_id, ""
 
 
-@app.command("replay")
+@app.command("replay", rich_help_panel=_GROUP_ANALYZE)
 def replay(
     trace_id: str,
     prompt: str = typer.Option(
@@ -3523,7 +3532,7 @@ _EXPLAIN_TOPICS: dict[str, str] = {
 }
 
 
-@app.command("explain")
+@app.command("explain", rich_help_panel=_GROUP_INFRA)
 def explain(
     topic: str = typer.Argument(
         "", help="Topic to explain. Run with no arg for the list.",
@@ -3574,7 +3583,7 @@ def explain(
     console.print()
 
 
-@app.command("version")
+@app.command("version", rich_help_panel=_GROUP_INFRA)
 def version() -> None:
     """Print Loupe version."""
     console.print(Text("loupe ", style=DIM) + Text(__version__, style=AMBER))
@@ -3589,7 +3598,7 @@ index_app = typer.Typer(
     help="Manage the DuckDB query index over your captured traces.",
     no_args_is_help=True,
 )
-app.add_typer(index_app, name="index")
+app.add_typer(index_app, name="index", rich_help_panel=_GROUP_INFRA)
 
 
 @index_app.command("info")

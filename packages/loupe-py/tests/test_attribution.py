@@ -422,6 +422,46 @@ def test_dashboard_style_css_contains_attribution_styles() -> None:
     assert ".attr-bar-fill" in css
 
 
+def test_dashboard_ships_guided_tour_markup() -> None:
+    """Phase 3 of the UX plan — the first-visit tour. We assert the tour
+    overlay markup + the JS controller + CSS rules are all wired in so
+    a regression that removed any of them would fail this test."""
+    from loupe.ui.server import STATIC_DIR
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    # HTML: the overlay + spotlight + card scaffolding exist
+    assert 'id="tour"' in html
+    assert 'id="tour-spot"' in html
+    assert 'id="tour-button"' in html
+
+    # CSS: the spotlight technique is in place
+    assert ".tour-backdrop" in css
+    assert ".tour-spot" in css
+    assert ".tour-card" in css
+
+    # JS: the controller + auto-launch + replay button wiring is present
+    assert "TOUR_STEPS" in js
+    assert "startTour" in js
+    assert "localStorage.getItem(TOUR_KEY)" in js
+
+
+def test_dashboard_ships_term_help_tooltips() -> None:
+    """The inline `?` icon next to technical terms must render with the
+    LoupeBench + Circuit attribution explanations."""
+    from loupe.ui.server import STATIC_DIR
+    css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert ".term-help" in css
+    assert ".term-help-popover" in css
+    assert "TERM_EXPLANATIONS" in js
+    # The two terms we expose `?` on today.
+    assert 'data-term="loupebench"' in js
+    assert 'data-term="circuit-attribution"' in js
+
+
 # ---------------------------------------------------------------------------
 # Real SAE backend — gated by sae-lens + transformer-lens being installed
 # ---------------------------------------------------------------------------

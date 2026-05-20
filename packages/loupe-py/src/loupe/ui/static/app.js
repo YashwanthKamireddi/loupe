@@ -401,7 +401,7 @@ function renderAnnotationCard(ann) {
   return `
     <div class="annot-card">
       <div class="annot-head">
-        <span class="annot-eyebrow">Tagged for LoupeBench</span>
+        <span class="annot-eyebrow">Tagged for LoupeBench<button class="term-help" type="button" data-term="loupebench" aria-label="What is LoupeBench?" aria-expanded="false">?</button></span>
         <span class="annot-cat">${escapeHtml(ann.failure_category)}</span>
         <span class="annot-sev">${escapeHtml(ann.severity || "")}</span>
       </div>
@@ -458,7 +458,7 @@ function renderAttributionCard(attr) {
   return `
     <div class="attr-card">
       <div class="attr-head">
-        <span class="attr-eyebrow">Circuit attribution</span>
+        <span class="attr-eyebrow">Circuit attribution<button class="term-help" type="button" data-term="circuit-attribution" aria-label="What is circuit attribution?" aria-expanded="false">?</button></span>
         <span class="attr-prov">${provenance}</span>
       </div>
       ${summary}
@@ -707,3 +707,247 @@ document.addEventListener("click", (e) => {
 setLiveState("connecting");
 loadTraces();
 subscribeToEvents();
+
+/* =========================================================================
+   First-visit guided tour
+   =========================================================================
+   Shown ONCE per browser (gated by localStorage["loupe.tour.seen"]).
+   Re-triggerable via the "Tour" button in the sidebar footer.
+   ========================================================================= */
+
+const TOUR_STEPS = [
+  {
+    target: ".brand",
+    title: "Welcome to Loupe",
+    body: "This is your local forensic dashboard for AI agents. Every captured agent run lives in a single JSONL file under ~/.loupe/traces — and shows up here.",
+    placement: "below",
+  },
+  {
+    target: "#trace-list",
+    title: "Case files",
+    body: "Every captured run is a case file in this sidebar. The pulse on the right marks live updates streaming in.",
+    placement: "right",
+  },
+  {
+    target: "#filter-bar",
+    title: "Filter chips",
+    body: "Cut to what matters: only failed runs, only tagged runs, or everything. Combine with the search box above for step-content match.",
+    placement: "right",
+  },
+  {
+    target: "#viewer",
+    title: "Evidence pane",
+    body: "Click a case file to see its timeline, the step-by-step trail, every input / output, and — when you've run `loupe attribute` — the SAE circuit features that fired during the LLM call.",
+    placement: "left",
+  },
+  {
+    target: "#tour-button",
+    title: "Need this again?",
+    body: "Tap the Tour button down here any time to replay. Press ? for the keyboard-shortcut cheat sheet.",
+    placement: "above",
+  },
+];
+
+const TOUR_KEY = "loupe.tour.seen";
+const tour = {
+  index: 0,
+  active: false,
+  els: {
+    overlay: document.getElementById("tour"),
+    spot: document.getElementById("tour-spot"),
+    title: document.getElementById("tour-title"),
+    body: document.getElementById("tour-body"),
+    progress: document.getElementById("tour-progress"),
+    stepLabel: document.getElementById("tour-step-label"),
+    next: document.getElementById("tour-next"),
+    back: document.getElementById("tour-back"),
+    skip: document.getElementById("tour-skip"),
+    card: document.querySelector(".tour-card"),
+    trigger: document.getElementById("tour-button"),
+  },
+};
+
+function startTour(opts = {}) {
+  tour.active = true;
+  tour.index = 0;
+  tour.els.overlay.hidden = false;
+  // Reflow then flip the attribute so the CSS transition fires.
+  requestAnimationFrame(() => tour.els.overlay.setAttribute("aria-hidden", "false"));
+  // Build the progress dots once per session.
+  tour.els.progress.innerHTML = TOUR_STEPS.map(() => "<span></span>").join("");
+  renderTourStep();
+  if (!opts.silent) localStorage.setItem(TOUR_KEY, "1");
+}
+
+function endTour() {
+  tour.active = false;
+  tour.els.overlay.setAttribute("aria-hidden", "true");
+  setTimeout(() => { tour.els.overlay.hidden = true; }, 200);
+  localStorage.setItem(TOUR_KEY, "1");
+}
+
+function renderTourStep() {
+  const step = TOUR_STEPS[tour.index];
+  const target = document.querySelector(step.target);
+  if (!target) {
+    // Skip steps whose anchor isn't on the page (e.g. trace-list empty).
+    if (tour.index < TOUR_STEPS.length - 1) {
+      tour.index += 1;
+      renderTourStep();
+      return;
+    }
+    endTour();
+    return;
+  }
+  // Place the spotlight over the target.
+  const rect = target.getBoundingClientRect();
+  const PAD = 6;
+  Object.assign(tour.els.spot.style, {
+    top: `${rect.top - PAD}px`,
+    left: `${rect.left - PAD}px`,
+    width: `${rect.width + 2 * PAD}px`,
+    height: `${rect.height + 2 * PAD}px`,
+  });
+  // Place the card adjacent to the spot.
+  const cardW = 360;
+  const cardH = 220;
+  const gap = 16;
+  let top = rect.bottom + gap;
+  let left = rect.left;
+  switch (step.placement) {
+    case "above":
+      top = rect.top - cardH - gap;
+      left = Math.max(16, rect.left);
+      break;
+    case "right":
+      top = rect.top;
+      left = rect.right + gap;
+      break;
+    case "left":
+      top = rect.top;
+      left = Math.max(16, rect.left - cardW - gap);
+      break;
+    default: /* below */
+      top = rect.bottom + gap;
+      left = Math.max(16, rect.left);
+  }
+  // Keep within viewport
+  top = Math.min(top, window.innerHeight - cardH - 16);
+  top = Math.max(top, 16);
+  left = Math.min(left, window.innerWidth - cardW - 16);
+  left = Math.max(left, 16);
+  Object.assign(tour.els.card.style, {
+    top: `${top}px`,
+    left: `${left}px`,
+  });
+  // Content
+  tour.els.title.textContent = step.title;
+  tour.els.body.textContent = step.body;
+  tour.els.stepLabel.textContent = `Step ${tour.index + 1} of ${TOUR_STEPS.length}`;
+  tour.els.back.hidden = tour.index === 0;
+  tour.els.next.textContent =
+    tour.index === TOUR_STEPS.length - 1 ? "Done" : "Next →";
+  // Progress dots
+  [...tour.els.progress.children].forEach((dot, i) => {
+    dot.classList.toggle("is-done",  i <  tour.index);
+    dot.classList.toggle("is-active", i === tour.index);
+  });
+}
+
+tour.els.next.addEventListener("click", () => {
+  if (tour.index >= TOUR_STEPS.length - 1) {
+    endTour();
+    return;
+  }
+  tour.index += 1;
+  renderTourStep();
+});
+tour.els.back.addEventListener("click", () => {
+  if (tour.index === 0) return;
+  tour.index -= 1;
+  renderTourStep();
+});
+tour.els.skip.addEventListener("click", endTour);
+tour.els.trigger?.addEventListener("click", () => startTour());
+
+window.addEventListener("resize", () => {
+  if (tour.active) renderTourStep();
+});
+
+// Auto-launch on first visit, after the page has settled.
+if (!localStorage.getItem(TOUR_KEY)) {
+  setTimeout(() => startTour(), 600);
+}
+
+/* =========================================================================
+   Inline "?" tooltips on technical terms
+   =========================================================================
+   Click a .term-help button to open a small popover with a one-paragraph
+   plain-English explanation. Single popover at a time; click anywhere
+   else to dismiss.
+   ========================================================================= */
+
+const TERM_EXPLANATIONS = {
+  "circuit-attribution": {
+    eyebrow: "Circuit attribution",
+    body: "When you run `loupe attribute`, Loupe re-runs each LLM call through a small open model and projects the activations through a Sparse Autoencoder. The top features by activation magnitude are the interpretable concepts that fired most strongly for this turn.",
+  },
+  "sae-feature": {
+    eyebrow: "SAE feature",
+    body: "Sparse Autoencoder feature — a single dimension in a dictionary of human-interpretable concepts learned from a model's hidden states. Each feature corresponds to a specific concept (e.g. \"phrases about legal rulings\").",
+  },
+  "loupebench": {
+    eyebrow: "LoupeBench",
+    body: "The benchmark you build by tagging failing steps. Run `loupe export` to bundle every tagged failure into a single JSONL file you can publish, share, or run regression tests against.",
+  },
+  "tagged-step": {
+    eyebrow: "Tagged step",
+    body: "A step you've marked as a benchmark-worthy failure via Tag this step. Tagged steps participate in `loupe bench` (regression replay) and `loupe cluster` (feature analysis across failures).",
+  },
+};
+
+let _activePopover = null;
+function closeTermPopover() {
+  if (_activePopover) {
+    _activePopover.popover.remove();
+    _activePopover.btn.setAttribute("aria-expanded", "false");
+    _activePopover = null;
+  }
+}
+function openTermPopover(btn, termKey) {
+  closeTermPopover();
+  const def = TERM_EXPLANATIONS[termKey];
+  if (!def) return;
+  const popover = document.createElement("div");
+  popover.className = "term-help-popover";
+  popover.innerHTML =
+    `<span class="term-help-eyebrow">${escapeHtml(def.eyebrow)}</span>` +
+    `${escapeHtml(def.body)}`;
+  document.body.appendChild(popover);
+
+  const rect = btn.getBoundingClientRect();
+  const top = Math.min(rect.bottom + 6, window.innerHeight - 200);
+  let left = rect.left - 8;
+  left = Math.max(16, Math.min(left, window.innerWidth - 296));
+  Object.assign(popover.style, { top: `${top}px`, left: `${left}px` });
+  btn.setAttribute("aria-expanded", "true");
+  _activePopover = { btn, popover };
+}
+document.addEventListener("click", (e) => {
+  const helpBtn = e.target.closest?.(".term-help");
+  if (helpBtn) {
+    const k = helpBtn.dataset.term;
+    if (_activePopover && _activePopover.btn === helpBtn) {
+      closeTermPopover();
+    } else {
+      openTermPopover(helpBtn, k);
+    }
+    e.stopPropagation();
+    return;
+  }
+  // Click anywhere else dismisses.
+  closeTermPopover();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeTermPopover();
+});

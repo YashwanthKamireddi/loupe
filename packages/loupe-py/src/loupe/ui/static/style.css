@@ -606,6 +606,154 @@ input, select, textarea {
   .skeleton-row { animation: none; }
 }
 
+/* =========================================================================
+   First-visit guided tour
+   =========================================================================
+   Sentry-/Linear-style spotlight + side card. Designed to teach the user
+   the dashboard in 5 steps without ever blocking the underlying UI:
+   - Tour overlay is a dimmed full-screen layer.
+   - The .tour-spot is a hollow rectangle that "punches out" the dim layer
+     around the targeted element using box-shadow (no SVG/canvas needed).
+   - The .tour-card floats next to the spot, repositioned by the JS
+     controller as the tour advances.
+   ========================================================================= */
+
+.tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+.tour-backdrop[aria-hidden="false"] {
+  pointer-events: auto;
+  opacity: 1;
+}
+/* The spot: the small box-shadow trick — a transparent rectangle with a
+   huge spread shadow that dims everything OUTSIDE it. */
+.tour-spot {
+  position: absolute;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(12, 11, 9, 0.78);
+  border: 1.5px solid var(--amber);
+  transition: top 220ms ease-out, left 220ms ease-out,
+              width 220ms ease-out, height 220ms ease-out;
+  pointer-events: none;
+}
+.tour-card {
+  position: absolute;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius);
+  padding: var(--s-5) var(--s-5) var(--s-4);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  transition: top 220ms ease-out, left 220ms ease-out;
+}
+.tour-title {
+  font-family: "EB Garamond", "Iowan Old Style", Georgia, serif;
+  font-style: italic;
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--ink);
+  margin: var(--s-2) 0 var(--s-2);
+  letter-spacing: -0.01em;
+}
+.tour-body {
+  font-size: var(--t-base);
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.tour-progress {
+  display: flex;
+  gap: 4px;
+}
+.tour-progress span {
+  display: block;
+  height: 3px;
+  flex: 1;
+  background: var(--border);
+  border-radius: 2px;
+  transition: background 200ms;
+}
+.tour-progress span.is-done {
+  background: var(--amber-soft);
+}
+.tour-progress span.is-active {
+  background: var(--amber);
+}
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+.tour-step-label {
+  flex: 1;
+  font-size: var(--t-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-backdrop,
+  .tour-spot,
+  .tour-card { transition: none; }
+}
+
+/* Inline ? icons next to technical terms — click for a one-paragraph
+   plain-English popover. Kept minimal so it doesn't compete with the
+   primary content. */
+.term-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border: 1px solid var(--border-mid);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  vertical-align: super;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.term-help:hover,
+.term-help[aria-expanded="true"] {
+  color: var(--amber);
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+}
+.term-help-popover {
+  position: absolute;
+  width: 280px;
+  max-width: calc(100vw - 48px);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius);
+  padding: var(--s-3) var(--s-4);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  color: var(--ink-2);
+  z-index: 800;
+}
+.term-help-popover .term-help-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--blue);
+  font-weight: 600;
+  margin-bottom: 4px;
+  display: block;
+}
+
 .trace-view {
   display: flex;
   flex-direction: column;

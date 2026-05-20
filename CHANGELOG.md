@@ -7,6 +7,83 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.52] — 2026-05-19  ·  UX overhaul — Phases 3 + 4 (the final two)
+
+Closes out the UX overhaul plan with the two remaining phases.
+
+### Phase 3 — Dashboard first-visit guided tour + `?` tooltips
+
+The dashboard now ships a Sentry-/Linear-style guided tour that runs
+once on first visit (gated by ``localStorage["loupe.tour.seen"]``) and
+can be re-triggered any time via the **Tour** button in the sidebar
+footer. Five steps walk the user through:
+
+1. Brand bar + live indicator
+2. Case-files sidebar
+3. Filter chips
+4. Evidence pane (with mention of circuit attribution)
+5. The Tour replay button + keyboard help
+
+Implementation: a hollow ``.tour-spot`` box-shadow trick punches a
+spotlight in a dimmed overlay (no SVG / canvas). The card placement
+is recomputed on every step + on window resize. Honors
+``prefers-reduced-motion`` — no slide animations if the user opted out.
+
+Inline ``?`` icons next to two technical terms launch popovers with
+plain-English explanations:
+
+- **LoupeBench** on the annotation card
+- **Circuit attribution** on the attribution card
+
+The popover stays minimal (cool-blue accent, no animation, click-out
+to dismiss, Escape closes). Extensible: ``TERM_EXPLANATIONS`` is a
+flat dict in ``app.js`` — adding a new term is one entry + one
+``<button class="term-help" data-term="…">?</button>`` site.
+
+### Phase 4 — Organize `loupe --help` by purpose, not alphabetically
+
+Instead of hiding 21 commands behind a ``loupe advanced`` subcommand
+(which would feel like hiding power), the top-level help is now
+**grouped** using Typer's ``rich_help_panel``:
+
+```
+╭─ Get started ────────────────────────╮
+│ setup · try · init                   │
+╭─ Use it (no code required) ──────────╮
+│ ask · chat · run                     │
+╭─ Inspect captured runs ──────────────╮
+│ start · ui · list · show · diff ·    │
+│ stats · annotations                  │
+╭─ Analyze + benchmark ────────────────╮
+│ tag · untag · bench · cost ·         │
+│ attribute · cluster · replay ·       │
+│ report · export                      │
+╭─ Infrastructure ─────────────────────╮
+│ doctor · verify · purge · providers ·│
+│ explain · version · index            │
+```
+
+A first-time developer can now scan ``loupe --help`` in under five
+seconds and know where to start. The ``index`` subgroup is correctly
+grouped under Infrastructure too.
+
+### Tests
+- 2 new tests covering the tour markup and the term-help tooltip wiring.
+- **305 Python + 37 TypeScript = 342 tests.** Ruff + mypy + tsc clean.
+
+### What this closes
+
+All seven phases of the UX overhaul plan (docs/UX_PLAN.md) are now
+shipped:
+
+- ✅ Phase 1 — smart router + setup wizard + try
+- ✅ Phase 2 — ask / chat / run (zero-code paths)
+- ✅ Phase 3 — Dashboard tour + ? tooltips  *(this release)*
+- ✅ Phase 4 — `loupe --help` grouped by purpose  *(this release)*
+- ✅ Phase 5 — Self-healing index + did-you-mean
+- ✅ Phase 6 — `loupe explain <topic>`
+- (Phase 7 — PyPI publish + 3-tier extras is release-engineering, not code.)
+
 ## [0.0.51] — 2026-05-19  ·  The wedge — `loupe bench` + `loupe cost` + rate-limit awareness
 
 Research on the 2026 LLM-observability landscape (LangSmith, Langfuse,
