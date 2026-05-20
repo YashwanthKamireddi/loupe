@@ -456,9 +456,10 @@ def try_cmd(
     )
     console.print()
 
+    text: str = ""
     try:
         with spinner("Capturing"):
-            text: str = _run()
+            text = _run()
     except Exception as exc:  # noqa: BLE001
         console.print(Text(f"  ✗ {exc}", style=RED))
         console.print(hint("loupe setup    re-check your provider key"))
@@ -486,17 +487,46 @@ def _default_model_for(provider: str) -> str:
 
 
 def _invoke_provider(provider: str, api_key: str, model: str, prompt: str) -> str:
-    """Synchronous one-shot call to any supported provider."""
+    """Synchronous single-shot call to any supported provider."""
+    return _invoke_with_history(
+        provider, api_key, model,
+        [{"role": "user", "content": prompt}],
+    )
+
+
+def _invoke_with_history(
+    provider: str, api_key: str, model: str,
+    history: list[dict[str, str]],
+) -> str:
+    """Multi-turn invocation. ``history`` is a list of ``{role, content}``
+    messages with roles ``user`` / ``assistant`` — provider-translated
+    internally so callers don't see per-SDK shape differences.
+
+    The single-shot ``_invoke_provider`` above delegates to this so
+    every provider has exactly one call site for both modes.
+    """
     if provider in ("gemini", "google"):
         from google import genai
         client = genai.Client(api_key=api_key)
-        return client.models.generate_content(model=model, contents=prompt).text or ""
+        contents = [
+            {
+                "role": "user" if m["role"] == "user" else "model",
+                "parts": [{"text": m["content"]}],
+            }
+            for m in history
+        ]
+        return client.models.generate_content(model=model, contents=contents).text or ""
     if provider == "anthropic":
         import anthropic
         anthropic_client = anthropic.Anthropic(api_key=api_key)
         ant_resp = anthropic_client.messages.create(
-            model=model, max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
+            model=model, max_tokens=1024,
+            messages=[
+                # The Anthropic SDK's TypedDict has role: Literal["user",
+                # "assistant"] — we trust the caller to feed valid roles.
+                {"role": m["role"], "content": m["content"]}  # type: ignore[typeddict-item, misc]
+                for m in history
+            ],
         )
         return "".join(
             getattr(b, "text", "") for b in (ant_resp.content or [])
@@ -506,11 +536,482 @@ def _invoke_provider(provider: str, api_key: str, model: str, prompt: str) -> st
         from openai import OpenAI
         openai_client = OpenAI(api_key=api_key)
         oai_resp = openai_client.chat.completions.create(
-            model=model, max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
+            model=model, max_tokens=1024,
+            messages=[
+                {"role": m["role"], "content": m["content"]}  # type: ignore[misc]
+                for m in history
+            ],
         )
         return oai_resp.choices[0].message.content or ""
     raise RuntimeError(f"no invoker for provider {provider!r}")
+
+
+# ----------------------------------------------------------------------------
+# Phase 2: zero-code usage paths — ask / chat / run
+# ----------------------------------------------------------------------------
+
+
+@app.command("ask")
+def ask(
+    question: list[str] = typer.Argument(
+        ..., help="Your question. Quote it if it contains shell metacharacters.",
+    ),
+    provider: str = typer.Option(
+        "", "--provider",
+        help="Provider to use. Default: your configured default.",
+    ),
+    model: str = typer.Option(
+        "", "--model",
+        help="Model id. Default: the provider's default.",
+    ),
+) -> None:
+    """One captured LLM call — like ChatGPT in the terminal, with a trace.
+
+    ::
+
+        loupe ask "Reply in one sentence: what is observability?"
+
+    The trace lands in ``~/.loupe/traces/`` automatically — inspect it
+    with ``loupe ui`` or ``loupe show <id>``.
+    """
+    prompt = " ".join(question).strip()
+    if not prompt:
+        console.print(Text("  ✗ empty question. Pass some words to ask.", style=RED))
+        raise typer.Exit(code=1)
+    _run_single_capture(prompt, provider_override=provider or None,
+                        model_override=model or None, name="loupe-ask")
+
+
+def _run_single_capture(
+    prompt: str,
+    *,
+    provider_override: str | None = None,
+    model_override: str | None = None,
+    name: str = "loupe-ask",
+) -> None:
+    """Shared implementation behind ``loupe ask`` + ``loupe try`` ergonomics.
+
+    Looks up the provider + key from Config, prints the prompt + model,
+    runs the call inside an @trace block, and prints the answer + the
+    one-line trace summary.
+    """
+    from loupe import record_step
+    from loupe import trace as trace_decorator
+    from loupe.config import Config
+    from loupe.integrations import patch_all
+
+    cfg = Config.load()
+    providers = cfg.configured_providers()
+    if not providers:
+        console.print(Text("  ✗ no provider configured yet.", style=RED))
+        console.print(hint("loupe setup    configure your first provider"))
+        raise typer.Exit(code=1)
+
+    provider = provider_override or (
+        cfg.default_provider if cfg.default_provider in providers else providers[0]
+    )
+    if provider not in providers:
+        console.print(
+            Text(
+                f"  ✗ provider {provider!r} not configured. "
+                f"Have: {', '.join(providers)}.",
+                style=RED,
+            )
+        )
+        console.print(hint(f"loupe setup --provider {provider}    add this provider"))
+        raise typer.Exit(code=1)
+
+    chosen_model = model_override or _default_model_for(provider)
+    api_key = cfg.api_key_for(provider)
+    assert api_key   # configured_providers() guaranteed this
+
+    patch_all()
+
+    @trace_decorator(name=name, framework=provider)
+    def _run() -> str:
+        record_step(
+            "plan", "compose prompt",
+            outputs={"q": prompt[:200], "provider": provider, "model": chosen_model},
+        )
+        text = _invoke_provider(provider, api_key, chosen_model, prompt)
+        record_step("final", "got reply", outputs={"text": text[:300]})
+        return text
+
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text(f"{provider}:{chosen_model}", style=INK)
+    )
+    console.print()
+
+    answer: str = ""
+    try:
+        with spinner("thinking"):
+            answer = _run()
+    except Exception as exc:  # noqa: BLE001 — surface the API error verbatim
+        console.print(Text(f"  ✗ {exc}", style=RED))
+        console.print(hint("loupe setup    re-check your provider key"))
+        raise typer.Exit(code=1) from None
+
+    assert isinstance(answer, str)
+    console.print(Text("  " + answer.strip(), style=INK))
+    console.print()
+
+
+@app.command("chat")
+def chat(
+    provider: str = typer.Option(
+        "", "--provider",
+        help="Provider to use. Default: your configured default.",
+    ),
+    model: str = typer.Option(
+        "", "--model",
+        help="Model id. Default: the provider's default.",
+    ),
+) -> None:
+    """Interactive REPL — multi-turn conversation, every turn captured.
+
+    Slash commands inside the REPL:
+
+      /tag <category> [notes]   tag the last turn as a benchmark failure
+      /show                     print the last captured trace
+      /dashboard                open the dashboard in your browser
+      /clear                    reset conversation history
+      /help                     show this list
+      /quit                     exit (or just press Enter on an empty line)
+
+    The conversation history is held in memory and sent on each turn so
+    follow-up questions work as expected. Each turn lands as its own
+    Loupe trace in ``~/.loupe/traces/``.
+    """
+    from loupe import record_step
+    from loupe import trace as trace_decorator
+    from loupe.config import Config
+    from loupe.integrations import patch_all
+
+    cfg = Config.load()
+    providers = cfg.configured_providers()
+    if not providers:
+        console.print(Text("  ✗ no provider configured yet.", style=RED))
+        console.print(hint("loupe setup    configure your first provider"))
+        raise typer.Exit(code=1)
+
+    chosen_provider = provider or (
+        cfg.default_provider if cfg.default_provider in providers else providers[0]
+    )
+    if chosen_provider not in providers:
+        console.print(
+            Text(
+                f"  ✗ provider {chosen_provider!r} not configured. "
+                f"Have: {', '.join(providers)}.",
+                style=RED,
+            )
+        )
+        raise typer.Exit(code=1)
+
+    chosen_model = model or _default_model_for(chosen_provider)
+    api_key = cfg.api_key_for(chosen_provider)
+    assert api_key
+
+    patch_all()
+
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text(f"chat ({chosen_provider}:{chosen_model})", style=INK)
+        + Text("  ·  ", style=DIM)
+        + Text("/help for commands · blank line to quit", style=DIM)
+    )
+    console.print()
+
+    # Each turn is traced via a single decorator-bound function defined
+    # ONCE (outside the loop) — keeps the closure clean and lets ruff
+    # see it's not a loop-variable capture.
+    @trace_decorator(name="loupe-chat-turn", framework=chosen_provider)
+    def _capture_turn(
+        history: list[dict[str, str]], user_text: str,
+    ) -> str:
+        history.append({"role": "user", "content": user_text})
+        record_step(
+            "plan", "user turn",
+            outputs={"q": user_text[:200], "history_len": len(history)},
+        )
+        assert api_key
+        text = _invoke_with_history(
+            chosen_provider, api_key, chosen_model, history,
+        )
+        history.append({"role": "assistant", "content": text})
+        record_step("final", "got reply", outputs={"text": text[:300]})
+        return text
+
+    history: list[dict[str, str]] = []
+    last_trace_id: str | None = None
+    last_step_id: str | None = None
+
+    while True:
+        try:
+            user_text = input("  you ▸ ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            break
+
+        if not user_text:
+            break
+
+        if user_text.startswith("/"):
+            cont = _handle_chat_slash(
+                user_text, history, last_trace_id, last_step_id,
+            )
+            if cont == "quit":
+                break
+            if cont == "cleared":
+                history = []
+                last_trace_id = None
+                last_step_id = None
+            continue
+
+        answer: str
+        try:
+            answer = _capture_turn(history, user_text)
+        except Exception as exc:  # noqa: BLE001
+            console.print(Text(f"  ✗ {exc}", style=RED))
+            # Remove the user turn we appended inside _capture_turn so
+            # re-asking doesn't double-include it.
+            if history and history[-1]["role"] == "user":
+                history.pop()
+            continue
+
+        # The most recent trace file is ours. Cache its id for slash cmds.
+        traces_dir = _default_dir() / "traces"
+        if traces_dir.exists():
+            files = sorted(
+                traces_dir.glob("*.jsonl"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if files:
+                last_trace_id = files[0].stem
+                # Find the step_id of the assistant's reply (last llm-call).
+                try:
+                    import json as _json
+                    for line in reversed(files[0].read_text().splitlines()):
+                        obj = _json.loads(line)
+                        if obj.get("_type") == "step" and obj.get("kind") == "llm-call":
+                            last_step_id = obj["step_id"]
+                            break
+                except Exception:  # noqa: BLE001 — best-effort
+                    last_step_id = None
+
+        # Render the reply.
+        console.print()
+        console.print(Text(f"  {chosen_provider} ▸ ", style=AMBER))
+        # Wrap long answers naturally; Rich handles this.
+        console.print(Text("    " + answer.strip().replace("\n", "\n    "), style=INK))
+        if last_trace_id:
+            console.print()
+            console.print(
+                Text(f"      ✓ trace {last_trace_id[:12]}", style=DIM)
+                + Text("  ·  /tag <category> to mark this turn", style=DIM)
+            )
+        console.print()
+
+    console.print(Text("  bye. all traces saved to ~/.loupe/traces/", style=DIM))
+
+
+def _handle_chat_slash(
+    raw: str,
+    history: list[dict[str, str]],
+    last_trace_id: str | None,
+    last_step_id: str | None,
+) -> str:
+    """Process one ``/foo bar`` slash command. Returns a sentinel:
+
+    - ``"continue"`` — keep the REPL going (the default).
+    - ``"quit"`` — break out of the REPL.
+    - ``"cleared"`` — caller should reset its local history + id state.
+    """
+    from loupe.annotation import Annotation, AnnotationStore
+
+    parts = raw[1:].split(maxsplit=1)
+    cmd = parts[0].lower() if parts else ""
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if cmd in ("quit", "exit", "q"):
+        return "quit"
+
+    if cmd in ("help", "?", "h"):
+        console.print()
+        help_lines = [
+            "/tag <category> [notes]   tag the last turn",
+            "/show                     print the last captured trace",
+            "/dashboard                open the dashboard",
+            "/clear                    reset conversation history",
+            "/quit                     exit (or blank line)",
+        ]
+        for line in help_lines:
+            console.print(Text(f"    {line}", style=DIM))
+        console.print()
+        return "continue"
+
+    if cmd == "clear":
+        console.print(Text("  ✓ conversation cleared", style=GREEN))
+        return "cleared"
+
+    if cmd == "dashboard":
+        import contextlib
+        import webbrowser
+        url = "http://127.0.0.1:7860"
+        with contextlib.suppress(Exception):
+            webbrowser.open(url, new=1)
+        console.print(
+            Text("  → opened ", style=DIM)
+            + Text(url, style=AMBER)
+            + Text("  (start it with `loupe ui` if not running)", style=DIM)
+        )
+        return "continue"
+
+    if cmd == "show":
+        if not last_trace_id:
+            console.print(Text("  no turns yet — say something first.", style=DIM))
+            return "continue"
+        path = _find_trace(last_trace_id[:12])
+        if path is None:
+            return "continue"
+        import json as _json
+        for line in path.open():
+            obj = _json.loads(line)
+            if obj.get("_type") == "step":
+                console.print(
+                    Text("    ", style=DIM)
+                    + Text(f"{obj['kind']:>10}", style=DIM)
+                    + Text(f"  {obj['name']}", style=INK)
+                )
+        return "continue"
+
+    if cmd == "tag":
+        if not last_trace_id or not last_step_id:
+            console.print(Text("  no captured turn yet to tag.", style=DIM))
+            return "continue"
+        if not rest:
+            console.print(
+                Text("  usage: /tag <category> [notes]", style=DIM)
+                + Text("  e.g. /tag hallucination invented a fake fact", style=DIM)
+            )
+            return "continue"
+        cat_parts = rest.split(maxsplit=1)
+        category = cat_parts[0]
+        notes = cat_parts[1] if len(cat_parts) > 1 else ""
+        try:
+            AnnotationStore().add(Annotation(
+                trace_id=last_trace_id,
+                step_id=last_step_id,
+                failure_category=category,  # type: ignore[arg-type]
+                notes=notes,
+                annotator="loupe-chat",
+            ))
+        except Exception as exc:  # noqa: BLE001
+            console.print(Text(f"  ✗ tag failed: {exc}", style=RED))
+            return "continue"
+        console.print(
+            Text("  ✓ tagged ", style=GREEN)
+            + Text(f"{last_trace_id[:12]}/{last_step_id[:8]}", style=AMBER)
+            + Text(f" as {category}", style=INK)
+        )
+        return "continue"
+
+    console.print(
+        Text(f"  unknown /{cmd}.  ", style=RED)
+        + Text("/help for the list.", style=DIM)
+    )
+    return "continue"
+
+
+@app.command("run")
+def run_script(
+    args: list[str] = typer.Argument(
+        ...,
+        help="Python script + its arguments. Example: loupe run my_agent.py 'hello'",
+    ),
+) -> None:
+    """Run a Python script with every LLM call auto-captured.
+
+    Loupe activates ``patch_all()`` before your script imports anything,
+    wraps the whole execution in a Loupe trace, and writes one JSONL
+    file per run to ``~/.loupe/traces/``. **No source edits needed in
+    the script** — bring your own agent code as-is.
+
+    ::
+
+        loupe run my_agent.py "What is observability?"
+        loupe run scripts/eval.py --eval-set my_set
+
+    The script's own ``sys.argv`` is preserved as if you had called
+    ``python my_agent.py …`` directly.
+    """
+    import runpy
+
+    from loupe import record_step
+    from loupe import trace as trace_decorator
+    from loupe.integrations import patch_all
+
+    if not args:
+        console.print(Text("  ✗ pass a Python script to run.", style=RED))
+        raise typer.Exit(code=1)
+
+    script = args[0]
+    script_path = Path(script)
+    if not script_path.exists():
+        console.print(Text(f"  ✗ no such file: {script}", style=RED))
+        console.print(hint("loupe init <name>     scaffold a starter project"))
+        raise typer.Exit(code=1)
+
+    name = script_path.stem
+
+    # Replace sys.argv with the script's view of the world — exactly what
+    # `python script.py args...` would see.
+    original_argv = sys.argv[:]
+    sys.argv = list(args)
+
+    patch_all()
+
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text(f"running {script_path.name}", style=INK)
+        + Text("  ·  every LLM call captured", style=DIM)
+    )
+    console.print()
+
+    @trace_decorator(name=f"run:{name}", framework="loupe-run")
+    def _execute() -> None:
+        record_step(
+            "plan", "loupe run",
+            outputs={"script": str(script_path), "argv": list(args)},
+        )
+        runpy.run_path(str(script_path), run_name="__main__")
+
+    try:
+        _execute()
+    except SystemExit as exc:
+        # Honor the script's exit code; the trace is still captured.
+        sys.argv = original_argv
+        raise typer.Exit(code=exc.code if isinstance(exc.code, int) else 0) from None
+    except Exception as exc:  # noqa: BLE001
+        console.print(Text(f"  ✗ script raised: {exc}", style=RED))
+        console.print(
+            Text("    (the failure was still captured — open  loupe ui  to inspect)",
+                 style=DIM)
+        )
+        sys.argv = original_argv
+        raise typer.Exit(code=1) from None
+    finally:
+        sys.argv = original_argv
+
+    console.print()
+    console.print(Text("  ✓ done — trace captured", style=GREEN))
+    console.print(hint("loupe ui                   open the dashboard"))
+    console.print(hint("loupe list                 see this and every other run"))
+    console.print()
 
 
 @app.command("start")

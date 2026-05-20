@@ -7,6 +7,85 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.49] — 2026-05-19  ·  UX overhaul — Phase 2: ask / chat / run (zero code)
+
+Three new commands so a developer never has to write a single line of
+Python to use Loupe.
+
+### Added — `loupe ask <question>`
+
+```
+$ loupe ask "Reply in one sentence: what is observability?"
+
+  ◉ gemini:gemini-2.5-flash
+
+  Observability is the ability to understand what a system is doing
+  by examining its outputs and emitted signals.
+```
+
+One captured LLM call. Like ChatGPT in the terminal, with a trace
+written to `~/.loupe/traces/`.
+
+### Added — `loupe chat` (interactive REPL)
+
+```
+$ loupe chat
+
+  ◉ chat (gemini:gemini-2.5-flash)  ·  /help for commands · blank line to quit
+
+  you ▸ what is observability
+  gemini ▸ ...
+
+      ✓ trace 6d4ae83af377  ·  /tag <category> to mark this turn
+
+  you ▸ /tag hallucination invented a fact about latency
+  ✓ tagged 6d4ae83af377/d3a6a0967f78 as hallucination
+```
+
+Multi-turn conversation. History is held in memory and sent on each
+turn so follow-ups work. Slash commands:
+
+- `/tag <category> [notes]` — tag the last turn
+- `/show` — print the last captured trace
+- `/dashboard` — open the dashboard
+- `/clear` — reset history
+- `/help`, `/quit` — self-explanatory
+
+### Added — `loupe run script.py [args]`
+
+```
+$ loupe run my_agent.py "what is the capital of France?"
+  ◉ running my_agent.py  ·  every LLM call captured
+  ...
+  ✓ done — trace captured
+```
+
+Auto-instrument any Python script. Loupe calls `patch_all()` BEFORE
+the script imports anything, wraps the whole execution in `@trace`,
+and writes one JSONL per run. **No source edits needed**.
+
+Use cases:
+- Observe a teammate's script you don't want to modify
+- Capture an open-source agent's LLM calls
+- One-line addition to existing pipelines
+
+`sys.argv` is rewritten so the script sees its own arg list as if
+called directly with `python script.py args`.
+
+### Refactored — single multi-turn invoker
+
+The provider call code lived in three almost-duplicated functions
+(setup's ping, try's call, ask's call). Now there's one
+`_invoke_with_history` that all four entry points (setup ping, try,
+ask, chat) route through. Adding a fifth provider is one branch.
+
+### Tests
+- 8 new tests covering: ask without config, ask empty question, ask
+  full path with patched invoker (asserts trace landed on disk), chat
+  without config, run requires args, run missing script, run executes
+  + writes trace with the expected `run:<stem>` name.
+- **311 Python + 37 TypeScript = 348 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.48] — 2026-05-19  ·  UX overhaul — Phase 1: smart router + setup + try
 
 The friction-zero UX plan ships in five phases over the next releases.

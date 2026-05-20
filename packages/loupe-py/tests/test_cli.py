@@ -763,7 +763,7 @@ def test_setup_short_circuits_when_already_configured(
 
 
 # ---------------------------------------------------------------------------
-# loupe try — one-shot demo
+# loupe try / ask / chat / run — Phase 2 zero-code paths
 # ---------------------------------------------------------------------------
 
 
@@ -774,6 +774,112 @@ def test_try_without_config_exits_with_hint(
     assert res.exit_code == 1
     assert "no provider configured" in res.output
     assert "loupe setup" in res.output
+
+
+def test_ask_without_config_exits_with_hint(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["ask", "what", "is", "observability"])
+    assert res.exit_code == 1
+    assert "no provider configured" in res.output
+
+
+def test_ask_empty_question_rejected(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """`loupe ask ""` should fail cleanly, not call the API."""
+    res = runner.invoke(app, ["ask", ""])
+    assert res.exit_code == 1
+    assert "empty question" in res.output
+
+
+def test_ask_uses_configured_provider(
+    runner: CliRunner, loupe_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: with a fake provider invoker, ask captures a trace
+    and prints the answer."""
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-fake-test-key")
+
+    from loupe import cli as cli_mod
+    calls: list[tuple] = []
+
+    def fake_invoke(provider, api_key, model, prompt):  # type: ignore[no-untyped-def]
+        calls.append((provider, model, prompt))
+        return f"reply to: {prompt}"
+
+    monkeypatch.setattr(cli_mod, "_invoke_provider", fake_invoke)
+
+    res = runner.invoke(app, ["ask", "what", "is", "loupe"])
+    assert res.exit_code == 0, res.output
+    assert calls, "the invoker should have been called"
+    assert calls[0][2] == "what is loupe"
+    assert "reply to: what is loupe" in res.output
+
+    # And a trace landed on disk.
+    traces = list((loupe_home / "traces").glob("*.jsonl"))
+    assert len(traces) == 1
+
+
+def test_chat_without_config_exits_with_hint(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["chat"])
+    assert res.exit_code == 1
+    assert "no provider configured" in res.output
+
+
+def test_run_requires_args(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """`loupe run` with nothing fails cleanly — typer rejects it first."""
+    res = runner.invoke(app, ["run"])
+    # Typer raises a usage error (exit 2) before our code runs.
+    assert res.exit_code != 0
+
+
+def test_run_with_missing_script_exits_with_hint(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["run", "/no/such/file.py"])
+    assert res.exit_code == 1
+    assert "no such file" in res.output
+
+
+def test_run_executes_script_and_captures_trace(
+    runner: CliRunner, loupe_home: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tiny script that uses @trace should produce a captured trace
+    when run through `loupe run`. We don't need a real LLM here — the
+    script just records a step itself, which is enough to prove the
+    full capture pipeline (including patch_all + @trace wrapping) ran.
+    """
+    # Re-enable the indexer so this test exercises the real wrapping
+    # path end-to-end.
+    monkeypatch.delenv("LOUPE_DISABLE_INDEX", raising=False)
+
+    script = tmp_path / "tiny_agent.py"
+    script.write_text(
+        "from loupe import record_step\n"
+        "record_step('thought', 'inside tiny_agent', outputs={'a': 1})\n"
+        "print('hello from tiny_agent')\n",
+        encoding="utf-8",
+    )
+
+    res = runner.invoke(app, ["run", str(script)])
+    assert res.exit_code == 0, res.output
+    assert "running tiny_agent.py" in res.output
+    assert "hello from tiny_agent" in res.output
+
+    # The outer @trace wrap means we should have one captured trace.
+    traces = list((loupe_home / "traces").glob("*.jsonl"))
+    assert len(traces) == 1, f"expected 1 trace, got {len(traces)}: {traces}"
+    # The captured trace's name follows our `run:{stem}` convention.
+    import json as _json
+    header = _json.loads(traces[0].read_text().splitlines()[0])
+    assert header["name"] == "run:tiny_agent"
+    assert header["framework"] == "loupe-run"
 
 
 # ---------------------------------------------------------------------------
