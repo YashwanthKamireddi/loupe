@@ -75,9 +75,55 @@ app = typer.Typer(
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
-    """Show a welcome screen when no command is given."""
+    """Smart router: pick the right action based on the user's state.
+
+    First run (no config + no traces)  → run `loupe setup` automatically
+    Configured but no traces           → suggest `loupe try`
+    Has traces                          → show the welcome with next-steps
+    """
     if ctx.invoked_subcommand is not None:
         return
+    _smart_route()
+
+
+def _smart_route() -> None:
+    """Decide what `loupe` (no args) should do for this user, this moment.
+
+    Goal: collapse the first 30 minutes of friction to ~90 seconds.
+
+    Interactivity rule: only auto-launch the setup wizard when we KNOW we
+    have a real terminal. In CI / piped / CliRunner contexts, fall back
+    to the static welcome screen so we don't hang on an unread stdin.
+    """
+    from loupe.config import Config
+
+    home = _default_dir()
+    has_traces = (home / "traces").exists() and any(
+        (home / "traces").glob("*.jsonl")
+    )
+    cfg = Config.load()
+    has_provider = bool(cfg.configured_providers())
+
+    # First-run case: no config + no traces → if interactive, guide them
+    # through setup. Otherwise show the static welcome with `loupe setup`
+    # at the top so it's still discoverable.
+    is_interactive = (
+        sys.stdin.isatty() and sys.stdout.isatty()
+        and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
+    )
+    if not has_provider and not has_traces and is_interactive:
+        console.print()
+        console.print(Text("  Welcome to Loupe.", style=f"bold {AMBER}"))
+        console.print(
+            Text(
+                "  Let's get you set up — takes about 90 seconds.",
+                style=DIM,
+            )
+        )
+        console.print()
+        _run_setup()
+        return
+
     _show_welcome()
 
 
@@ -115,6 +161,356 @@ def _show_welcome() -> None:
         hint("loupe doctor          diagnose your install + integrations"),
         hint("loupe --help          full command reference"),
     )
+
+
+@app.command("setup")
+def setup(
+    provider: str = typer.Option(
+        "", "--provider", "-p",
+        help="Provider to configure (gemini, anthropic, openai). "
+             "Omit to be asked interactively.",
+    ),
+    api_key: str = typer.Option(
+        "", "--api-key", "-k",
+        help="Pre-supplied API key (skips the interactive paste step).",
+    ),
+    no_browser: bool = typer.Option(
+        False, "--no-browser",
+        help="Don't auto-open the browser to the provider's key-creation page.",
+    ),
+) -> None:
+    """Configure your first LLM provider — interactive or scripted.
+
+    The wizard:
+      1. Detects existing keys in env vars (you may already be set up).
+      2. Asks which provider you want to configure (gemini, anthropic, openai).
+      3. Opens the browser to the right key-creation page.
+      4. Prompts for the key (no shell quoting).
+      5. Persists to ``~/.loupe/config.toml`` (file is +0600 / your-only-read).
+      6. Tests the key with a tiny ping call.
+      7. Sets your default provider + model.
+
+    All steps are skippable via flags for scripted use, e.g. CI:
+
+        loupe setup --provider gemini --api-key "$GEMINI_KEY" --no-browser
+    """
+    _run_setup(
+        forced_provider=provider or None,
+        forced_key=api_key or None,
+        open_browser=not no_browser,
+    )
+
+
+def _run_setup(
+    *,
+    forced_provider: str | None = None,
+    forced_key: str | None = None,
+    open_browser: bool = True,
+) -> None:
+    """Implementation of the setup wizard. Pure function-style for testing."""
+    from loupe.config import Config
+
+    cfg = Config.load()
+    already = cfg.configured_providers()
+
+    if already and forced_provider is None:
+        console.print(
+            Text("  ✓ ", style=GREEN)
+            + Text("you're already set up:", style=INK)
+        )
+        for name in already:
+            source = "env var" if any(
+                os.environ.get(k) for k in (
+                    "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                    "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                ) if name in k.lower()
+            ) else "config file"
+            console.print(
+                Text(f"    • {name}", style=AMBER)
+                + Text(f"  ({source})", style=DIM)
+            )
+        console.print()
+        console.print(hint("loupe try                   one-shot demo trace"))
+        console.print(hint("loupe ui                    open the dashboard"))
+        return
+
+    # Pick a provider.
+    provider = forced_provider or _prompt_provider()
+    if provider not in {"gemini", "anthropic", "openai"}:
+        console.print(
+            Text(f"  ✗ unknown provider {provider!r}; pick gemini, anthropic, or openai.",
+                 style=RED)
+        )
+        raise typer.Exit(code=1)
+
+    key_pages = {
+        "gemini":    "https://aistudio.google.com/apikey",
+        "anthropic": "https://console.anthropic.com/settings/keys",
+        "openai":    "https://platform.openai.com/api-keys",
+    }
+    default_models = {
+        "gemini":    "gemini-2.5-flash",
+        "anthropic": "claude-haiku-4-5-20251001",
+        "openai":    "gpt-4o-mini",
+    }
+    key_format_hints = {
+        "gemini":    "AIza…",
+        "anthropic": "sk-ant-…",
+        "openai":    "sk-…",
+    }
+    url = key_pages[provider]
+
+    # Open the browser (best-effort, never blocks).
+    if open_browser:
+        import contextlib
+        import webbrowser
+        console.print(
+            Text("  → opening ", style=DIM)
+            + Text(url, style=AMBER)
+            + Text(" in your browser…", style=DIM)
+        )
+        with contextlib.suppress(Exception):
+            webbrowser.open(url, new=1)
+
+    # Prompt for the key.
+    if forced_key is not None:
+        api_key = forced_key
+    else:
+        console.print()
+        console.print(
+            Text("  Paste your ", style=DIM)
+            + Text(provider, style=AMBER)
+            + Text(f" key here  (format: {key_format_hints[provider]}):", style=DIM)
+        )
+        # Use getpass so the key doesn't echo if the user has a savvy shell.
+        # Fall back to plain input if getpass complains (no tty).
+        try:
+            import getpass
+            api_key = getpass.getpass("    key › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print(Text("\n  ✗ setup cancelled.", style=RED))
+            raise typer.Exit(code=1) from None
+        except Exception:  # noqa: BLE001 — fallback when no tty
+            api_key = input("    key › ").strip()
+
+    if not api_key:
+        console.print(Text("  ✗ no key provided.", style=RED))
+        raise typer.Exit(code=1)
+
+    # Persist + test.
+    new_cfg = cfg.set_provider_key(provider, api_key).with_default(
+        provider=provider,
+        model=default_models[provider],
+    )
+    saved_at = new_cfg.save()
+
+    console.print()
+    console.print(
+        Text("  ✓ ", style=GREEN)
+        + Text("saved to ", style=INK)
+        + Text(str(saved_at), style=AMBER)
+    )
+
+    # Ping the API to confirm the key works.
+    ok, detail = _ping_provider(provider, api_key, default_models[provider])
+    if ok:
+        console.print(
+            Text("  ✓ ", style=GREEN)
+            + Text(f"verified — {detail}", style=INK)
+        )
+    else:
+        console.print(
+            Text("  ⚠ ", style=AMBER)
+            + Text(f"saved, but the test call failed: {detail}", style=INK)
+        )
+        console.print(
+            Text("    The key is still saved — re-run with a corrected one if needed.",
+                 style=DIM)
+        )
+
+    console.print()
+    console.print(section("Next"))
+    console.print()
+    console.print(hint("loupe try                   one-shot demo trace"))
+    console.print(hint("loupe ask 'your question'   one captured call"))
+    console.print(hint("loupe chat                  interactive REPL"))
+    console.print(hint("loupe ui                    open the dashboard"))
+    console.print()
+
+
+def _prompt_provider() -> str:
+    """Ask the user which provider to configure. Defaults to gemini."""
+    console.print(section("Pick a provider"))
+    console.print()
+    options = [
+        ("1. gemini      ", "free tier available · fastest path to a first trace"),
+        ("2. anthropic   ", "Claude · best for production-quality agent runs"),
+        ("3. openai      ", "GPT-4o, o-series · widest framework support"),
+    ]
+    for label, desc in options:
+        console.print(Text(f"    {label}", style=AMBER) + Text(desc, style=DIM))
+    console.print()
+    try:
+        choice = input("    your pick [1-3, default 1] › ").strip() or "1"
+    except (EOFError, KeyboardInterrupt):
+        console.print(Text("\n  ✗ setup cancelled.", style=RED))
+        raise typer.Exit(code=1) from None
+    return {"1": "gemini", "2": "anthropic", "3": "openai"}.get(choice, choice.lower())
+
+
+def _ping_provider(provider: str, api_key: str, model: str) -> tuple[bool, str]:
+    """Send a tiny request to confirm the key works. Returns (ok, message).
+
+    Best-effort: any exception during the ping is reported as a soft fail,
+    not a hard error — the key is still saved.
+    """
+    try:
+        if provider == "gemini":
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model=model, contents="ping",
+            )
+            return True, f"model {model} responded ({len(resp.text or '')} chars)"
+        if provider == "anthropic":
+            import anthropic
+            anthropic_client = anthropic.Anthropic(api_key=api_key)
+            ant_resp = anthropic_client.messages.create(
+                model=model, max_tokens=8,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return True, f"model {model} responded ({ant_resp.usage.output_tokens} tokens)"
+        if provider == "openai":
+            from openai import OpenAI
+            openai_client = OpenAI(api_key=api_key)
+            oai_resp = openai_client.chat.completions.create(
+                model=model, max_tokens=8,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            tok = oai_resp.usage.completion_tokens if oai_resp.usage else 0
+            return True, f"model {model} responded ({tok} tokens)"
+    except ImportError as exc:
+        return False, f"SDK not installed ({exc.name}). pip install '{exc.name}'."
+    except Exception as exc:  # noqa: BLE001 — show provider error verbatim
+        return False, str(exc)[:160]
+    return False, f"no ping implementation for {provider}"
+
+
+@app.command("try")
+def try_cmd(
+    model: str = typer.Option(
+        "", "--model",
+        help="Override the model. Default: your configured default.",
+    ),
+) -> None:
+    """One-shot demo — sends a canned prompt with your configured provider,
+    captures the trace, prints the answer, suggests `loupe ui`.
+
+    The "it works on my machine" proof, after `loupe setup`. Costs less
+    than a fraction of a cent.
+    """
+    from loupe.config import Config
+
+    cfg = Config.load()
+    providers = cfg.configured_providers()
+    if not providers:
+        console.print(Text("  ✗ no provider configured yet.", style=RED))
+        console.print(hint("loupe setup    configure your first provider"))
+        raise typer.Exit(code=1)
+
+    provider = cfg.default_provider if cfg.default_provider in providers else providers[0]
+    chosen_model = model or _default_model_for(provider)
+    api_key = cfg.api_key_for(provider)
+    assert api_key, "configured_providers said yes but api_key_for says no — bug"
+
+    question = (
+        "Reply in one sentence: what's one thing AI agent observability "
+        "should never compromise on?"
+    )
+
+    from loupe import record_step
+    from loupe import trace as trace_decorator
+    from loupe.integrations import patch_all
+
+    patch_all()
+
+    @trace_decorator(name="loupe-try", framework=provider)
+    def _run() -> str:
+        record_step(
+            "plan", "loupe try demo",
+            outputs={"q": question, "provider": provider, "model": chosen_model},
+        )
+        text = _invoke_provider(provider, api_key, chosen_model, question)
+        record_step("final", "got reply", outputs={"text": text[:300]})
+        return text
+
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text("calling ", style=DIM)
+        + Text(f"{provider}:{chosen_model}", style=INK)
+    )
+    console.print(
+        Text("    prompt: ", style=DIM)
+        + Text(question, style=INK)
+    )
+    console.print()
+
+    try:
+        with spinner("Capturing"):
+            text: str = _run()
+    except Exception as exc:  # noqa: BLE001
+        console.print(Text(f"  ✗ {exc}", style=RED))
+        console.print(hint("loupe setup    re-check your provider key"))
+        raise typer.Exit(code=1) from None
+
+    console.print(
+        Text("  ✓ ", style=GREEN)
+        + Text(text.strip()[:280], style=INK)
+    )
+    console.print()
+    console.print(section("Next"))
+    console.print()
+    console.print(hint("loupe ui                   open the dashboard"))
+    console.print(hint("loupe list                 see every captured trace"))
+    console.print(hint("loupe ask '<question>'     one more captured call"))
+    console.print()
+
+
+def _default_model_for(provider: str) -> str:
+    return {
+        "gemini":    "gemini-2.5-flash",
+        "anthropic": "claude-haiku-4-5-20251001",
+        "openai":    "gpt-4o-mini",
+    }.get(provider, "gemini-2.5-flash")
+
+
+def _invoke_provider(provider: str, api_key: str, model: str, prompt: str) -> str:
+    """Synchronous one-shot call to any supported provider."""
+    if provider in ("gemini", "google"):
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        return client.models.generate_content(model=model, contents=prompt).text or ""
+    if provider == "anthropic":
+        import anthropic
+        anthropic_client = anthropic.Anthropic(api_key=api_key)
+        ant_resp = anthropic_client.messages.create(
+            model=model, max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(
+            getattr(b, "text", "") for b in (ant_resp.content or [])
+            if getattr(b, "type", None) == "text"
+        )
+    if provider == "openai":
+        from openai import OpenAI
+        openai_client = OpenAI(api_key=api_key)
+        oai_resp = openai_client.chat.completions.create(
+            model=model, max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return oai_resp.choices[0].message.content or ""
+    raise RuntimeError(f"no invoker for provider {provider!r}")
 
 
 @app.command("start")

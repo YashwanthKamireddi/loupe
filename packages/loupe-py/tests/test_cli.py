@@ -698,6 +698,101 @@ def test_replay_resolves_anthropic_and_openai_backends(
 
 
 # ---------------------------------------------------------------------------
+# loupe setup — interactive wizard (scripted flag path)
+# ---------------------------------------------------------------------------
+
+
+def test_setup_scripted_path_saves_config(
+    runner: CliRunner, loupe_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`loupe setup --provider X --api-key K --no-browser` is the
+    non-interactive path used by CI. It MUST save to config.toml and
+    print 'saved to' even if the ping call fails."""
+    # Force ping to fail so we don't accidentally hit the network.
+    from loupe import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_ping_provider",
+                        lambda *a, **kw: (False, "test mode — no network"))
+
+    res = runner.invoke(app, [
+        "setup",
+        "--provider", "gemini",
+        "--api-key", "AIza-test-key-12345",
+        "--no-browser",
+    ])
+    assert res.exit_code == 0, res.output
+    assert "saved to" in res.output
+
+    # Reload the config and assert the key landed.
+    from loupe.config import Config
+    cfg = Config.load()
+    assert cfg.providers["gemini"].api_key == "AIza-test-key-12345"
+    assert cfg.default_provider == "gemini"
+
+
+def test_setup_rejects_empty_key(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, [
+        "setup", "--provider", "gemini", "--api-key", "", "--no-browser",
+    ], input="\n")  # blank stdin too
+    assert res.exit_code == 1
+    assert "no key provided" in res.output
+
+
+def test_setup_rejects_unknown_provider(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, [
+        "setup", "--provider", "gpt-12-mega", "--api-key", "x", "--no-browser",
+    ])
+    assert res.exit_code == 1
+    assert "unknown provider" in res.output
+
+
+def test_setup_short_circuits_when_already_configured(
+    runner: CliRunner, loupe_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a provider is already in env vars, `loupe setup` (no args)
+    should report it and exit cleanly, not re-prompt."""
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-already-set")
+    res = runner.invoke(app, ["setup"])
+    assert res.exit_code == 0
+    assert "already set up" in res.output
+
+
+# ---------------------------------------------------------------------------
+# loupe try — one-shot demo
+# ---------------------------------------------------------------------------
+
+
+def test_try_without_config_exits_with_hint(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["try"])
+    assert res.exit_code == 1
+    assert "no provider configured" in res.output
+    assert "loupe setup" in res.output
+
+
+# ---------------------------------------------------------------------------
+# Smart router — `loupe` with no args
+# ---------------------------------------------------------------------------
+
+
+def test_smart_router_falls_back_to_welcome_in_non_tty(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """CliRunner is non-TTY, so the router MUST NOT auto-launch setup
+    (which would hang on input()). Instead it shows the welcome screen."""
+    res = runner.invoke(app, [])
+    assert res.exit_code == 0
+    # No input prompts hit; welcome screen shown.
+    assert "loupe init" in res.output or "loupe setup" in res.output
+
+
+# ---------------------------------------------------------------------------
 # JSON output mode — pipeable + scriptable
 # ---------------------------------------------------------------------------
 

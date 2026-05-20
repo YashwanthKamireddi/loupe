@@ -7,6 +7,86 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.48] — 2026-05-19  ·  UX overhaul — Phase 1: smart router + setup + try
+
+The friction-zero UX plan ships in five phases over the next releases.
+This is Phase 1 — the highest-impact piece. A first-time developer can
+now go from `loupe` (no args) to a captured real trace in **90 seconds**
+without making a single configuration decision.
+
+### Added — `~/.loupe/config.toml` (the durable config layer)
+
+Replaces the historical scattered env-var-driven config:
+
+```toml
+[default]
+provider = "gemini"
+model    = "gemini-2.5-flash"
+
+[providers.gemini]
+api_key = "AIza..."
+
+[providers.anthropic]
+api_key = "sk-ant-..."
+
+[attribution]
+backend = "mock"
+```
+
+- New `loupe.config` module — `Config.load()` / `.save()` / immutable
+  builder pattern (`set_provider_key`, `with_default`).
+- **Env vars still win** as ephemeral overrides — backwards compat intact.
+- Tolerant: corrupt config never crashes startup, falls back to defaults.
+- Human-readable: hand-rendered TOML with comments + stable section order.
+
+### Added — `loupe setup` (interactive wizard)
+
+```
+$ loupe setup
+  Pick a provider
+    1. gemini       free tier available · fastest path to a first trace
+    2. anthropic    Claude · best for production-quality agent runs
+    3. openai       GPT-4o, o-series · widest framework support
+    your pick [1-3, default 1] › 1
+
+  → opening https://aistudio.google.com/apikey in your browser…
+  Paste your gemini key here (format: AIza…):
+    key › •••••••
+
+  ✓ saved to /home/you/.loupe/config.toml
+  ✓ verified — model gemini-2.5-flash responded
+```
+
+Scripted mode for CI:
+
+```
+loupe setup --provider gemini --api-key "$GEMINI_KEY" --no-browser
+```
+
+### Added — `loupe try` (one-shot demo)
+
+After setup, ``loupe try`` sends a canned prompt with your configured
+provider, captures the trace, prints the answer, and suggests
+``loupe ui``. The "it works on my machine" proof in 5 seconds.
+
+### Added — smart router (`loupe` with no args)
+
+`loupe` (no args) now picks the right action based on your state:
+
+- First run, no config, no traces → auto-launches `loupe setup`
+  (only when stdin is a real TTY; never in CI / piped contexts)
+- Setup done, no traces → shows next steps including `loupe try`
+- Has traces → shows the welcome with `loupe ui` / `list` / `stats`
+
+### Tests
+- 10 new tests for the config layer (load defaults, save+reload,
+  env-var-wins, alphabetical providers, immutability, TOML format,
+  corrupt-file tolerance, unknown-provider safety, ProviderConfig helper).
+- 6 new tests for setup/try/router (scripted save path, empty-key
+  rejection, unknown-provider rejection, already-configured
+  short-circuit, try-without-config error, smart-router non-TTY fallback).
+- **305 Python + 37 TypeScript = 342 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.47] — 2026-05-19  ·  Dashboard search + tighter error hints
 
 ### Dashboard — search now spans step content, not just headers
