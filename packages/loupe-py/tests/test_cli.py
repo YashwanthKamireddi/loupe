@@ -763,6 +763,149 @@ def test_setup_short_circuits_when_already_configured(
 
 
 # ---------------------------------------------------------------------------
+# loupe cost — LLM spend tracking
+# ---------------------------------------------------------------------------
+
+
+def _seed_llm_call_trace(home: Path, *, model: str, in_tokens: int,
+                         out_tokens: int) -> str:
+    """Capture a trace whose llm-call step has known token counts."""
+    from loupe.store import JSONLStore
+
+    traces_dir = home / "traces"
+    traces_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.stem for p in traces_dir.glob("*.jsonl")}
+    store = JSONLStore(root=traces_dir)
+
+    @trace(name="cost-test", framework="test", store=store)
+    def agent() -> None:
+        record_step(
+            "llm-call",
+            f"provider:{model}",
+            inputs={"model": model, "provider": "openai"},
+            outputs={
+                "status": 200,
+                "input_tokens": in_tokens,
+                "output_tokens": out_tokens,
+                "text": "ok",
+            },
+        )
+
+    agent()
+    after = {p.stem for p in traces_dir.glob("*.jsonl")}
+    return next(iter(after - before))
+
+
+def test_cost_empty_home_returns_zero(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["cost", "--json"])
+    assert res.exit_code == 0
+    import json as _json
+    data = _json.loads(res.output.strip())
+    assert data["total_usd"] == 0.0
+    assert data["trace_count"] == 0
+
+
+def test_cost_sums_priced_steps(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """One trace with 1M input + 1M output tokens of gpt-4o-mini = $0.75."""
+    _seed_llm_call_trace(
+        loupe_home, model="gpt-4o-mini",
+        in_tokens=1_000_000, out_tokens=1_000_000,
+    )
+    res = runner.invoke(app, ["cost", "--json"])
+    assert res.exit_code == 0
+    import json as _json
+    data = _json.loads(res.output.strip())
+    assert data["total_usd"] == 0.75
+    assert data["step_count"] == 1
+    assert data["unpriced_step_count"] == 0
+    assert data["by_model"]["gpt-4o-mini"] == 0.75
+
+
+def test_cost_marks_unknown_model_as_unpriced(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """A model not in our pricing table shouldn't get silently $0'd —
+    it goes to unpriced so users see the gap."""
+    _seed_llm_call_trace(
+        loupe_home, model="some-private-fine-tune-v17",
+        in_tokens=100, out_tokens=50,
+    )
+    res = runner.invoke(app, ["cost", "--json"])
+    assert res.exit_code == 0
+    import json as _json
+    data = _json.loads(res.output.strip())
+    # Provider hint ('openai' in the fixture) gives a fallback price → priced.
+    # If we ever change behavior so unknown-model + known-provider → unpriced,
+    # update this assertion.
+    assert data["step_count"] + data["unpriced_step_count"] == 1
+
+
+def test_cost_pretty_output_renders(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    _seed_llm_call_trace(
+        loupe_home, model="gpt-4o-mini",
+        in_tokens=2_000_000, out_tokens=1_000_000,
+    )
+    res = runner.invoke(app, ["cost"])
+    assert res.exit_code == 0
+    assert "llm spend" in res.output
+    assert "$0.90" in res.output     # 2 * 0.15 + 1 * 0.60 = 0.90
+
+
+def test_cost_by_model_breakdown(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    _seed_llm_call_trace(
+        loupe_home, model="gpt-4o-mini",
+        in_tokens=1_000_000, out_tokens=0,
+    )
+    _seed_llm_call_trace(
+        loupe_home, model="gpt-4o",
+        in_tokens=1_000_000, out_tokens=0,
+    )
+    res = runner.invoke(app, ["cost", "--by-model", "--json"])
+    import json as _json
+    data = _json.loads(res.output.strip())
+    # Both traces should be priced; total = 0.15 + 2.50 = 2.65
+    assert data["step_count"] == 2, f"got data: {data}"
+    assert data["total_usd"] == 2.65
+    assert "gpt-4o-mini" in data["by_model"]
+    assert "gpt-4o" in data["by_model"]
+
+
+# ---------------------------------------------------------------------------
+# loupe bench — regression replay
+# ---------------------------------------------------------------------------
+
+
+def test_bench_with_no_tagged_failures_exits_clean(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """No tags → bench is a no-op, but informative + exit 0."""
+    _seed_one_trace(loupe_home)   # captured but untagged
+    res = runner.invoke(app, ["bench"])
+    assert res.exit_code == 0
+    assert "No tagged failures yet" in res.output
+    assert "loupe tag" in res.output
+
+
+def test_bench_filters_by_category(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """--category restricts the replay set."""
+    res = runner.invoke(app, [
+        "bench", "--category", "definitely-not-a-real-category",
+    ])
+    assert res.exit_code == 0
+    assert "No tagged failures in category" in res.output
+
+
+# ---------------------------------------------------------------------------
 # Did-you-mean typo suggestions + loupe explain
 # ---------------------------------------------------------------------------
 

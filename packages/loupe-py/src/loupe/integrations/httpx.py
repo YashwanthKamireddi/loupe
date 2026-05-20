@@ -246,7 +246,11 @@ def _summarize_response(provider: str, body: dict) -> dict[str, Any]:
             text = parts[0].get("text")
             if isinstance(text, str):
                 out["text"] = _truncate(text)
-    # Usage
+    # Usage — three different shapes in 2026:
+    #   Anthropic:  body.usage.input_tokens / output_tokens
+    #   OpenAI:     body.usage.prompt_tokens / completion_tokens
+    #   Gemini:     body.usageMetadata.promptTokenCount / candidatesTokenCount
+    # We accept all three so cost + attribution work cross-provider.
     usage = body.get("usage")
     if isinstance(usage, dict):
         out.setdefault(
@@ -257,6 +261,29 @@ def _summarize_response(provider: str, body: dict) -> dict[str, Any]:
             "output_tokens",
             usage.get("output_tokens") or usage.get("completion_tokens"),
         )
+    gemini_usage = body.get("usageMetadata")
+    if isinstance(gemini_usage, dict):
+        out.setdefault(
+            "input_tokens",
+            gemini_usage.get("promptTokenCount"),
+        )
+        out.setdefault(
+            "output_tokens",
+            gemini_usage.get("candidatesTokenCount"),
+        )
+    # Detect 429 / rate-limit responses as a first-class signal — this
+    # was 60 % of agent errors in early 2026 (Datadog State of AI 2026).
+    # We tag the step so the dashboard + `loupe list` can surface it.
+    status = out.get("status")
+    if status == 429:
+        out["rate_limited"] = True
+    elif (
+        isinstance(body.get("error"), dict)
+        and body["error"].get("code") == 429
+    ):
+        # Gemini returns 429 inside the body, not the HTTP status.
+        out["rate_limited"] = True
+        out.setdefault("status", 429)
     return out
 
 

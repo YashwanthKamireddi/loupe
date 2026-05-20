@@ -7,6 +7,111 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.51] — 2026-05-19  ·  The wedge — `loupe bench` + `loupe cost` + rate-limit awareness
+
+Research on the 2026 LLM-observability landscape (LangSmith, Langfuse,
+Phoenix, Helicone, Braintrust, Promptfoo, DeepEval, Datadog LLM) gave
+us a sharper picture of where Loupe is differentiated and where it
+needed to catch up:
+
+- **What we own that nobody else does**: SAE-based mechanistic
+  circuit attribution + Neuronpedia explanations + local-first JSONL.
+- **What the leaders own that we didn't**: CI-integrated regression
+  testing (Braintrust / Promptfoo / DeepEval lead this category).
+- **What every team needs that nobody surfaces well**: per-trace LLM
+  cost.
+- **What the 2026 pain numbers say**: rate-limit failures were 60 %
+  of LLM call errors in Feb 2026 (Datadog State of AI 2026); we
+  captured them but didn't surface them.
+
+This release closes all three gaps.
+
+### Added — `loupe bench`: agent regression testing
+
+```
+$ loupe bench
+  ◉ benchmarking 5 tagged failure(s)
+
+    original     category        replay
+    abc12345     hallucination   → xyz78901
+    def67890     loop            → mno45678
+    ghi24680     tool-misuse     ✗ ANTHROPIC_API_KEY not set
+    ...
+
+  ✓ 4 replayed  ·  1 failed
+  → loupe diff <original> <replay>    compare any pair
+  → loupe ui                          inspect side-by-side
+```
+
+For every tagged failure in the annotation store, ``loupe bench``
+re-invokes the original prompt against the current provider+model and
+captures the result as a new trace (``bench:<original-name>``).
+Exit 0 when every replay completes; exit 1 if any failed — drop-in
+CI gate. Flags:
+
+- ``--category hallucination``  restrict to one tag category
+- ``--provider anthropic``      override the per-trace framework
+- ``--model claude-sonnet-4-7`` test if a model upgrade fixes regressions
+- ``--limit 10``                cap the replay count
+
+This is **the wedge**: Loupe becomes the agent CI layer with
+mechanistic insight no competitor has.
+
+### Added — `loupe cost`: LLM spend tracking
+
+```
+$ loupe cost
+  llm spend
+
+         total   $12.47
+  traces scanned 1,243
+   priced steps  3,891
+       unpriced  4
+
+  by provider
+    anthropic   $9.21
+    gemini      $2.18
+    openai      $1.08
+```
+
+Walks every captured trace, sums (input × in-price) + (output × out-
+price) using the pricing table at :mod:`loupe.pricing`. Outputs:
+
+- formatted CLI tables (default), or ``--json`` for jq pipelines
+- ``--by-model`` breaks down by model id instead of provider
+- unpriced step count surfaces the gap (don't silently $0)
+
+Pricing table is hand-maintained, greppable on disk (USD per 1M
+tokens for 13 models across Anthropic / Gemini / OpenAI), and never
+calls a network pricing API on a hot path.
+
+### Added — rate-limit awareness in `universal-httpx`
+
+The universal-httpx interceptor now flags 429 responses with a
+``rate_limited: true`` field on the step's outputs. Catches:
+- HTTP 429 status codes (Anthropic, OpenAI standard form)
+- Gemini's in-body ``error.code = 429`` (status 200 wrapped error)
+
+The same step also gets ``status: 429`` set so existing dashboards
+filter cleanly. Foundation for the next release's ``rate-limit``
+filter chip in the UI.
+
+### Added — Gemini token count extraction
+
+Universal-httpx now reads Gemini's ``usageMetadata.promptTokenCount``
+and ``candidatesTokenCount`` in addition to Anthropic's
+``usage.input_tokens`` and OpenAI's ``usage.prompt_tokens``. Closes a
+real bug where ``loupe cost`` reported 0 priced steps for Gemini
+traces.
+
+### Tests
+- 10 new tests in :file:`tests/test_pricing.py` (exact match, prefix
+  strip, provider fallback, unknown returns None, math correctness,
+  missing-tokens, negative-tokens clamping, format tiers, known models).
+- 6 new CLI tests for cost (empty home, sum, unpriced, pretty, by-model)
+  and bench (no-tags, category filter).
+- **334 Python + 37 TypeScript = 371 tests.** Ruff + mypy + tsc clean.
+
 ## [0.0.50] — 2026-05-19  ·  UX overhaul — Phases 5 + 6: self-heal, did-you-mean, explain
 
 Three polish wins that match the friction bar set by gh / Stripe / Cargo CLIs.

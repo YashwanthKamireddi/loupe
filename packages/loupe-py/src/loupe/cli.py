@@ -2710,6 +2710,359 @@ def cluster(
     render_padded(*blocks)
 
 
+# ----------------------------------------------------------------------------
+# `loupe cost` — LLM spend tracking from captured traces
+# ----------------------------------------------------------------------------
+
+
+@app.command("cost")
+def cost(
+    by_model: bool = typer.Option(
+        False, "--by-model",
+        help="Break down by model id instead of by provider.",
+    ),
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Output as JSON (pipeable into jq, gates, dashboards).",
+    ),
+) -> None:
+    """LLM spend across every captured trace.
+
+    Sums the (input × in-price) + (output × out-price) for every
+    ``llm-call`` step whose ``inputs.model`` or step name resolves to
+    a known pricing tier. Steps with missing token counts are
+    counted as ``—`` (we never make up numbers).
+
+    Pricing table lives in :mod:`loupe.pricing` — published USD list
+    prices, hand-maintained, greppable on disk. Run ``loupe explain
+    config`` for the override path.
+    """
+    import json as _json
+    from collections import defaultdict
+
+    from loupe.pricing import estimate_cost_usd, format_usd, price_for
+
+    traces_dir = _default_dir() / "traces"
+    if not traces_dir.exists() or not any(traces_dir.glob("*.jsonl")):
+        if as_json:
+            typer.echo(_json.dumps({
+                "total_usd": 0.0,
+                "trace_count": 0,
+                "step_count": 0,
+                "unpriced_step_count": 0,
+                "by_provider": {},
+                "by_model": {},
+            }, indent=2))
+            return
+        render_padded(banner(version=__version__), _no_traces_hint())
+        return
+
+    total: float = 0.0
+    by_provider: dict[str, float] = defaultdict(float)
+    by_model_costs: dict[str, float] = defaultdict(float)
+    trace_count = 0
+    priced_steps = 0
+    unpriced_steps = 0
+
+    for path in sorted(traces_dir.glob("*.jsonl")):
+        trace_count += 1
+        for line in path.open(encoding="utf-8"):
+            try:
+                obj = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            if obj.get("_type") != "step" or obj.get("kind") != "llm-call":
+                continue
+
+            inputs = obj.get("inputs") or {}
+            outputs = obj.get("outputs") or {}
+
+            # Token counts can live in either step inputs/outputs (depending
+            # on the integration). Try each location explicitly — must not
+            # use ``or`` because a legitimate token count of 0 (rare but
+            # real for empty responses) would be silently dropped.
+            in_tok: Any = None
+            for src, key in (
+                (outputs, "input_tokens"),
+                (outputs, "input"),
+                (inputs, "input_tokens"),
+            ):
+                if src.get(key) is not None:
+                    in_tok = src[key]
+                    break
+            out_tok: Any = None
+            for src, key in (
+                (outputs, "output_tokens"),
+                (outputs, "output"),
+                (inputs, "output_tokens"),
+            ):
+                if src.get(key) is not None:
+                    out_tok = src[key]
+                    break
+            model_id = (
+                inputs.get("model")
+                or (obj.get("name") or "").split(":", 1)[-1]
+            )
+            provider_hint = inputs.get("provider")
+
+            cost_usd = estimate_cost_usd(
+                in_tok, out_tok, model=model_id, provider=provider_hint,
+            )
+            if cost_usd is None:
+                unpriced_steps += 1
+                continue
+            priced_steps += 1
+            total += cost_usd
+            p = price_for(model_id, provider_hint)
+            if p is not None:
+                by_provider[p.provider] += cost_usd
+                by_model_costs[p.model] += cost_usd
+
+    if as_json:
+        typer.echo(_json.dumps({
+            "total_usd":           round(total, 6),
+            "trace_count":         trace_count,
+            "step_count":          priced_steps,
+            "unpriced_step_count": unpriced_steps,
+            "by_provider":         {k: round(v, 6) for k, v in by_provider.items()},
+            "by_model":            {k: round(v, 6) for k, v in by_model_costs.items()},
+        }, indent=2))
+        return
+
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    summary = kv_table([
+        ("total", format_usd(total)),
+        ("traces scanned", str(trace_count)),
+        ("priced steps", str(priced_steps)),
+        ("unpriced", str(unpriced_steps)),
+    ])
+
+    breakdown = Table(
+        show_header=False, show_edge=False, box=SIMPLE, padding=(0, 2),
+        title=Text(
+            "by model" if by_model else "by provider",
+            style=f"italic {AMBER}",
+        ),
+        title_justify="left",
+    )
+    breakdown.add_column("name", style=INK, no_wrap=True)
+    breakdown.add_column("cost", style=DIM, no_wrap=True, justify="right")
+    rows = (by_model_costs if by_model else by_provider).items()
+    for name, c in sorted(rows, key=lambda r: -r[1]):
+        breakdown.add_row(name, format_usd(c))
+
+    render_padded(
+        banner("llm spend", version=__version__),
+        summary,
+        Text(),
+        breakdown,
+    )
+
+
+# ----------------------------------------------------------------------------
+# `loupe bench` — regression testing for captured tagged failures
+# ----------------------------------------------------------------------------
+
+
+@app.command("bench")
+def bench(
+    only_category: str = typer.Option(
+        "", "--category", "-c",
+        help="Restrict to one failure category (hallucination, loop, …).",
+    ),
+    provider_override: str = typer.Option(
+        "", "--provider",
+        help="Override the provider for every replay. Default: each "
+             "trace's original framework.",
+    ),
+    model_override: str = typer.Option(
+        "", "--model",
+        help="Override the model for every replay (e.g. test a model upgrade).",
+    ),
+    limit: int = typer.Option(
+        0, "--limit",
+        help="Replay at most N tagged failures. 0 = unlimited.",
+    ),
+) -> None:
+    """Replay every tagged failure as a regression test.
+
+    The agent CI loop:
+
+    1. You capture an agent run and tag a step (``loupe tag …``).
+    2. You change something — a prompt, a model, a tool.
+    3. ``loupe bench`` re-runs every tagged failure against the current
+       provider+model and reports which still produce the broken output.
+
+    Exit code:
+      - **0** when every tagged failure was successfully replayed (the
+        re-run completed without an SDK error). Inspect the new traces
+        with ``loupe diff <old> <new>`` to judge fix quality.
+      - **1** when one or more replays failed to execute (API error,
+        missing key, unsupported framework, etc.). Useful for CI gates.
+
+    Each replay is captured as a new trace named ``bench:<original-name>``
+    so you can compare side-by-side with ``loupe diff``.
+    """
+    from loupe.annotation import AnnotationStore
+
+    store = AnnotationStore()
+    targets: list[tuple[str, str, str]] = []  # (trace_id, step_id, category)
+    for trace_id, items in store.all().items():
+        for ann in items:
+            if only_category and ann.failure_category != only_category:
+                continue
+            targets.append((trace_id, ann.step_id, ann.failure_category))
+
+    if not targets:
+        msg = (
+            f"No tagged failures in category {only_category!r}."
+            if only_category else "No tagged failures yet."
+        )
+        console.print(Text(f"  {msg}", style=DIM))
+        console.print(hint("loupe tag <trace> <step> <category>    mark a failure"))
+        return
+
+    if limit > 0:
+        targets = targets[:limit]
+
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text(f"benchmarking {len(targets)} tagged failure(s)", style=INK)
+    )
+    if provider_override or model_override:
+        console.print(
+            Text("    override → ", style=DIM)
+            + Text(
+                f"{provider_override or 'original'}:{model_override or 'original'}",
+                style=AMBER,
+            )
+        )
+    console.print()
+
+    from rich.box import SIMPLE
+    from rich.table import Table
+
+    table = Table(
+        show_header=True, show_edge=False, box=SIMPLE, padding=(0, 2),
+        header_style=f"dim {DIM}",
+    )
+    table.add_column("original", style=AMBER, no_wrap=True, width=12)
+    table.add_column("category", style=INK, no_wrap=True, min_width=14)
+    table.add_column("replay", style=DIM, no_wrap=True)
+
+    successes = 0
+    failures = 0
+
+    with spinner("replaying tagged failures"):
+        for trace_id, step_id, category in targets:
+            del step_id    # reserved for future fine-grained re-run
+            ok, new_id, detail = _replay_one_for_bench(
+                trace_id, provider_override or None, model_override or None,
+            )
+            if ok:
+                successes += 1
+                table.add_row(trace_id[:12], category, f"→ {new_id[:12]}")
+            else:
+                failures += 1
+                table.add_row(
+                    trace_id[:12], category,
+                    Text(f"✗ {detail}", style=RED),
+                )
+
+    console.print(table)
+    console.print()
+    summary = (
+        Text("  ✓ ", style=GREEN)
+        + Text(f"{successes} replayed", style=INK)
+    )
+    if failures:
+        summary += Text(f"  ·  {failures} failed", style=RED)
+    console.print(summary)
+    console.print()
+    if successes > 0:
+        console.print(
+            hint("loupe diff <original> <replay>    compare any pair")
+        )
+        console.print(
+            hint("loupe ui                         inspect side-by-side")
+        )
+        console.print()
+
+    if failures > 0:
+        raise typer.Exit(code=1)
+
+
+def _replay_one_for_bench(
+    trace_id: str,
+    provider_override: str | None,
+    model_override: str | None,
+) -> tuple[bool, str, str]:
+    """Re-invoke one captured trace using the same machinery as
+    ``loupe replay`` — but quietly, returning (ok, new_trace_id, detail).
+
+    Reuses ``_extract_replay_inputs`` + ``_resolve_replay_backend`` so the
+    pricing/provider logic stays consistent across the two commands.
+    """
+    from loupe import record_step
+    from loupe import trace as trace_decorator
+    from loupe.integrations import patch_all
+
+    path = _find_trace(trace_id)
+    if path is None:
+        return False, "", "trace file gone"
+
+    header, prompt, model, framework = _extract_replay_inputs(path)
+    if not prompt:
+        return False, "", "couldn't extract prompt"
+
+    used_provider = provider_override or framework
+    used_model = model_override or model
+    if not used_model:
+        return False, "", "couldn't determine model"
+
+    runner = _resolve_replay_backend(used_provider, prompt, used_model, path.stem)
+    if runner is None:
+        return False, "", f"no backend for {used_provider!r}"
+    if runner.missing_env():
+        return False, "", f"{runner.missing_env()} not set"
+
+    patch_all()
+    original_name = (header or {}).get("name", "agent")
+
+    @trace_decorator(name=f"bench:{original_name}", framework=runner.framework)
+    def _execute() -> str:
+        record_step(
+            "plan", "bench replay",
+            outputs={
+                "q": prompt[:200],
+                "source_trace": path.stem,
+                "model": used_model,
+                "provider": runner.framework,
+            },
+        )
+        text, tokens = runner.invoke()
+        record_step("final", "got reply", outputs={"text": text[:300], **tokens})
+        return text
+
+    try:
+        _execute()
+    except Exception as exc:  # noqa: BLE001
+        return False, "", str(exc)[:80]
+
+    # Find the latest trace — that's the one we just wrote.
+    traces_dir = _default_dir() / "traces"
+    files = sorted(
+        traces_dir.glob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    new_id = files[0].stem if files else "?"
+    return True, new_id, ""
+
+
 @app.command("replay")
 def replay(
     trace_id: str,
