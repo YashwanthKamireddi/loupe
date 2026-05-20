@@ -420,12 +420,9 @@ def try_cmd(
     """
     from loupe.config import Config
 
+    _ensure_provider_or_setup("try the demo")
     cfg = Config.load()
     providers = cfg.configured_providers()
-    if not providers:
-        console.print(Text("  ✗ no provider configured yet.", style=RED))
-        console.print(hint("loupe setup    configure your first provider"))
-        raise typer.Exit(code=1)
 
     provider = cfg.default_provider if cfg.default_provider in providers else providers[0]
     chosen_model = model or _default_model_for(provider)
@@ -484,6 +481,61 @@ def try_cmd(
     console.print(hint("loupe ui                   open the dashboard"))
     console.print(hint("loupe list                 see every captured trace"))
     console.print(hint("loupe ask '<question>'     one more captured call"))
+    console.print()
+
+
+def _ensure_provider_or_setup(intent: str) -> None:
+    """If no provider is configured, flow seamlessly into ``loupe setup``.
+
+    Used by ``try`` / ``ask`` / ``chat`` so a first-time user never hits a
+    dead-end "no provider configured" error. They typed ``loupe ask "…"``
+    — we'd rather guide them through setup and then continue, not exit.
+
+    ``intent`` is the human-readable name of what they were trying to do
+    (``"ask a question"``, ``"start a chat"``, ``"try the demo"``), used
+    only for the friendly nudge line.
+
+    In non-TTY contexts (CI, piped) we keep the actionable error path so
+    scripts don't hang on unread stdin.
+    """
+    from loupe.config import Config
+
+    if Config.load().configured_providers():
+        return
+
+    is_tty = (
+        sys.stdin.isatty() and sys.stdout.isatty()
+        and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
+    )
+
+    if not is_tty:
+        console.print(Text("  ✗ no provider configured yet.", style=RED))
+        console.print(hint("loupe setup    configure your first provider"))
+        raise typer.Exit(code=1)
+
+    # Interactive: run setup inline, then return so the calling command
+    # can carry on with its original intent.
+    console.print()
+    console.print(
+        Text("  ◉ ", style=AMBER)
+        + Text(f"Loupe needs a provider before it can {intent}.", style=INK)
+    )
+    console.print(
+        Text("    Walking you through setup now — about 90 seconds.", style=DIM)
+    )
+    console.print()
+    _run_setup()
+
+    # After setup, verify we actually got a configured provider. If the
+    # user bailed mid-flow, exit cleanly without trying to continue.
+    if not Config.load().configured_providers():
+        raise typer.Exit(code=1)
+    console.print()
+    console.print(
+        Text("  ↩ resuming ", style=DIM)
+        + Text(intent, style=INK)
+        + Text("…", style=DIM)
+    )
     console.print()
 
 
@@ -563,7 +615,8 @@ def _invoke_with_history(
 @app.command("ask", rich_help_panel=_GROUP_USE)
 def ask(
     question: list[str] = typer.Argument(
-        ..., help="Your question. Quote it if it contains shell metacharacters.",
+        None,
+        help="Your question. Quote it if it contains shell metacharacters.",
     ),
     provider: str = typer.Option(
         "", "--provider",
@@ -583,9 +636,23 @@ def ask(
     The trace lands in ``~/.loupe/traces/`` automatically — inspect it
     with ``loupe ui`` or ``loupe show <id>``.
     """
-    prompt = " ".join(question).strip()
+    prompt = " ".join(question or []).strip()
     if not prompt:
-        console.print(Text("  ✗ empty question. Pass some words to ask.", style=RED))
+        console.print()
+        console.print(
+            Text("  ◉ ", style=AMBER)
+            + Text("what do you want to ask?", style=INK)
+        )
+        console.print(
+            Text("    Pass your question as the argument:", style=DIM)
+        )
+        console.print()
+        console.print(cmd('loupe ask "what is AI agent observability?"'))
+        console.print(cmd('loupe ask "summarize this in one sentence: ..."'))
+        console.print()
+        console.print(hint("loupe chat            multi-turn REPL instead of one-shot"))
+        console.print(hint("loupe explain ask     deeper explanation"))
+        console.print()
         raise typer.Exit(code=1)
     _run_single_capture(prompt, provider_override=provider or None,
                         model_override=model or None, name="loupe-ask")
@@ -609,12 +676,9 @@ def _run_single_capture(
     from loupe.config import Config
     from loupe.integrations import patch_all
 
+    _ensure_provider_or_setup("ask a question")
     cfg = Config.load()
     providers = cfg.configured_providers()
-    if not providers:
-        console.print(Text("  ✗ no provider configured yet.", style=RED))
-        console.print(hint("loupe setup    configure your first provider"))
-        raise typer.Exit(code=1)
 
     provider = provider_override or (
         cfg.default_provider if cfg.default_provider in providers else providers[0]
@@ -698,12 +762,9 @@ def chat(
     from loupe.config import Config
     from loupe.integrations import patch_all
 
+    _ensure_provider_or_setup("start a chat")
     cfg = Config.load()
     providers = cfg.configured_providers()
-    if not providers:
-        console.print(Text("  ✗ no provider configured yet.", style=RED))
-        console.print(hint("loupe setup    configure your first provider"))
-        raise typer.Exit(code=1)
 
     chosen_provider = provider or (
         cfg.default_provider if cfg.default_provider in providers else providers[0]
@@ -938,7 +999,7 @@ def _handle_chat_slash(
 @app.command("run", rich_help_panel=_GROUP_USE)
 def run_script(
     args: list[str] = typer.Argument(
-        ...,
+        None,
         help="Python script + its arguments. Example: loupe run my_agent.py 'hello'",
     ),
 ) -> None:
@@ -964,7 +1025,24 @@ def run_script(
     from loupe.integrations import patch_all
 
     if not args:
-        console.print(Text("  ✗ pass a Python script to run.", style=RED))
+        console.print()
+        console.print(
+            Text("  ◉ ", style=AMBER)
+            + Text("which Python script should Loupe run?", style=INK)
+        )
+        console.print(
+            Text("    Loupe activates patch_all() before your script imports", style=DIM)
+        )
+        console.print(
+            Text("    anything, so every LLM call is captured automatically.", style=DIM)
+        )
+        console.print()
+        console.print(cmd("loupe run my_agent.py 'your question'"))
+        console.print(cmd("loupe run scripts/eval.py --dataset my_set"))
+        console.print()
+        console.print(hint("loupe init my-agent    scaffold a starter project first"))
+        console.print(hint("loupe explain run      deeper explanation"))
+        console.print()
         raise typer.Exit(code=1)
 
     script = args[0]

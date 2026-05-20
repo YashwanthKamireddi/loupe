@@ -973,13 +973,18 @@ def test_ask_without_config_exits_with_hint(
     assert "no provider configured" in res.output
 
 
-def test_ask_empty_question_rejected(
+def test_ask_empty_question_shows_helpful_guidance(
     runner: CliRunner, loupe_home: Path,
 ) -> None:
-    """`loupe ask ""` should fail cleanly, not call the API."""
-    res = runner.invoke(app, ["ask", ""])
+    """`loupe ask` (no args) should NOT show Typer's ugly default error.
+    Instead: a clean inline guide showing exactly how to call it."""
+    res = runner.invoke(app, ["ask"])
     assert res.exit_code == 1
-    assert "empty question" in res.output
+    # The guidance copy + concrete example
+    assert "what do you want to ask?" in res.output
+    assert "loupe ask" in res.output
+    # NEVER Typer's default missing-argument banner
+    assert "Missing argument" not in res.output
 
 
 def test_ask_uses_configured_provider(

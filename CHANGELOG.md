@@ -7,6 +7,79 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.53] — 2026-05-19  ·  Zero dead-end paths — flow into setup, never abort
+
+Three real friction points surfaced in a hands-on shakedown:
+
+1. ``loupe ask`` with no args → Typer's default ugly red panel:
+   ``Missing argument 'QUESTION...'.``
+2. ``loupe run`` with no args → same ugly default.
+3. ``loupe ask`` / ``chat`` / ``try`` without a configured provider →
+   dead-ended at ``✗ no provider configured yet. → loupe setup``.
+
+A world-class CLI never tells the user "you should have done X first.
+Now exit and re-run." It pivots. This release does that.
+
+### Fixed — friendly missing-argument guidance
+
+``loupe ask`` and ``loupe run`` now render their own help block when
+called with no args, with concrete copy-paste-able examples and
+adjacent commands:
+
+```
+$ loupe ask
+  ◉ what do you want to ask?
+    Pass your question as the argument:
+
+  $ loupe ask "what is AI agent observability?"
+  $ loupe ask "summarize this in one sentence: ..."
+
+  → loupe chat            multi-turn REPL instead of one-shot
+  → loupe explain ask     deeper explanation
+```
+
+Typer's default ``Missing argument`` panel is gone for these commands.
+Implementation: arguments became optional (``typer.Argument(None)``)
+and we check + render the guidance inline.
+
+### Fixed — `try` / `ask` / `chat` flow seamlessly into setup
+
+Instead of failing with ``✗ no provider configured yet``, these
+commands now **launch ``loupe setup`` inline** and resume the
+original intent once setup completes:
+
+```
+$ loupe ask "what is AI?"
+  ◉ Loupe needs a provider before it can ask a question.
+    Walking you through setup now — about 90 seconds.
+
+  [setup wizard runs interactively]
+
+  ↩ resuming ask a question…
+
+  ◉ gemini:gemini-2.5-flash
+  ✓ Speed of capture, no data loss…
+```
+
+The pivot only happens in interactive TTY contexts; CI / piped
+contexts still see the explicit error + hint so scripts don't hang.
+
+### How
+
+- New ``_ensure_provider_or_setup(intent: str)`` helper. Used by
+  ``try``, the ``_run_single_capture`` core (powers ``ask``), and
+  ``chat``. Pure flow: if a provider is configured, return. Else
+  if TTY, run the wizard inline + verify success. Else print the
+  explicit error + hint (CI-safe).
+- One ``intent`` string per call site (``"ask a question"``,
+  ``"start a chat"``, ``"try the demo"``) feeds the resume line.
+
+### Tests
+- ``test_ask_empty_question_shows_helpful_guidance`` asserts the
+  new copy + the explicit absence of Typer's "Missing argument"
+  banner.
+- 303 Python + 37 TypeScript = 340 tests. Ruff + mypy + tsc clean.
+
 ## [0.0.52] — 2026-05-19  ·  UX overhaul — Phases 3 + 4 (the final two)
 
 Closes out the UX overhaul plan with the two remaining phases.
