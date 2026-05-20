@@ -244,6 +244,89 @@ def test_direct_capture_suppresses_httpx_layer(store: JSONLStore) -> None:
     assert len(steps) == 0, "universal-httpx should skip when direct capture active"
 
 
+def test_autopatch_creates_implicit_trace_when_no_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REGRESSION FENCE for the zero-code path.
+
+    With LOUPE_AUTOPATCH=1 and NO @trace context active, calling a
+    universal-httpx-patched send() must still produce a captured trace
+    on disk. This is the architectural promise: developers don't need
+    to write @trace or call patch_all in their code — just set the
+    env var and every LLM call captures automatically."""
+    monkeypatch.setenv("LOUPE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
+    monkeypatch.setenv("LOUPE_AUTOPATCH", "1")
+    from loupe import store as store_mod
+    store_mod._default = None
+
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    httpx._state["response"] = _make_response(
+        200, {"content": [{"text": "hi from autopatch"}]},
+    )
+
+    # No @trace context — just call the patched httpx directly.
+    httpx.Client().send(
+        _make_request(
+            "https://api.anthropic.com/v1/messages",
+            body={"model": "claude-haiku", "messages": []},
+        )
+    )
+
+    # A trace should now exist on disk.
+    traces = list((tmp_path / "traces").glob("*.jsonl"))
+    assert len(traces) == 1, "autopatch must have written a trace"
+    import json as _json
+    lines = traces[0].read_text().splitlines()
+    header = _json.loads(lines[0])
+    assert header["_type"] == "trace"
+    assert header["name"] == "autopatch"      # implicit-trace name
+    assert header["framework"] == "auto"
+    # And the llm-call step is captured
+    step_kinds = [
+        _json.loads(line).get("kind") for line in lines[1:]
+    ]
+    assert "llm-call" in step_kinds
+
+
+def test_no_autopatch_means_no_trace_without_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inverse: with LOUPE_AUTOPATCH unset, the universal-httpx interceptor
+    falls through silently when no @trace context exists. No phantom
+    traces, no side effects."""
+    monkeypatch.setenv("LOUPE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
+    monkeypatch.delenv("LOUPE_AUTOPATCH", raising=False)
+    from loupe import store as store_mod
+    store_mod._default = None
+
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    httpx._state["response"] = _make_response(200, {"content": [{"text": "x"}]})
+
+    httpx.Client().send(
+        _make_request(
+            "https://api.anthropic.com/v1/messages",
+            body={"model": "claude", "messages": []},
+        )
+    )
+
+    # No trace should have been written.
+    assert not (tmp_path / "traces").exists() or not list(
+        (tmp_path / "traces").glob("*.jsonl")
+    )
+
+
 def test_captures_error(store: JSONLStore) -> None:
     _install_fake_httpx()
     sys.modules.pop("loupe.integrations.httpx", None)

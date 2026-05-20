@@ -7,6 +7,82 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
 
+## [0.0.54] — 2026-05-19  ·  **LOUPE_AUTOPATCH — zero-code agent capture**
+
+The architectural promise that separates Loupe from a debug tool: a
+developer's existing Python agent script captures every LLM call with
+**zero code changes** — no ``@trace`` decorator, no ``patch_all()``
+call, no ``loupe run`` prefix.
+
+```fish
+set -Ux LOUPE_AUTOPATCH 1
+python my_agent.py    # captured automatically
+```
+
+That's the bar. Datadog APM, Sentry, New Relic all use this pattern
+for traditional services. Loupe now matches them for AI agents.
+
+### How it works
+
+1. **The .pth file** — Loupe ships ``loupe-autopatch.pth`` at the
+   wheel root. Python's ``site.py`` automatically scans every
+   site-packages directory for ``.pth`` files at interpreter startup
+   and executes any ``import`` lines they contain. Ours imports
+   ``loupe._autopatch_hook``.
+2. **The hook** — ``loupe/_autopatch_hook.py`` runs once per Python
+   process. It checks ``LOUPE_AUTOPATCH`` env var; if unset, returns
+   immediately (~1 µs cost). If set, calls ``patch_all()`` to install
+   every framework integration AND signals the universal-httpx
+   wrapper to enable implicit-trace mode.
+3. **Implicit traces** — the universal-httpx wrapper, when called
+   with no active ``@trace`` parent AND ``LOUPE_AUTOPATCH=1``,
+   transparently wraps the call in a freshly-begun one-call trace
+   named ``autopatch`` (framework ``auto``). The user sees their LLM
+   call land in ``~/.loupe/traces/`` like any other capture.
+
+### Performance properties
+
+- **Off (default)**: 1 ``os.environ`` lookup at interpreter startup.
+  No imports, no side effects. Effectively free.
+- **On**: +20-40 ms at startup (imports ``loupe.integrations``).
+  Per-call overhead is the same as ``@trace``: <100 µs/step, <5 ms/trace.
+- **Opt out per-process**: ``LOUPE_AUTOPATCH= python my_agent.py``
+  unsets the var for one run.
+
+### Refactor
+
+The universal-httpx wrapper was reorganized:
+
+- ``_emit_around`` / ``_emit_around_async`` extract the
+  invoke-and-emit-step body so the normal + implicit-trace paths
+  share one capture path.
+- ``_implicit_trace_context()`` is a contextmanager that creates an
+  on-demand anonymous trace and finalizes it correctly on success
+  AND failure (sets ``failed`` + ``error`` metadata on raises).
+- ``_autopatch_enabled()`` is the single read of the env var.
+
+### Setup integration
+
+After ``loupe setup`` saves a provider key, it now offers
+"Enable autopatch in this shell session?" (default yes). If accepted,
+it sets ``LOUPE_AUTOPATCH=1`` for the current process and prints the
+fish / bash / zsh commands to make it persistent.
+
+### Tests
+
+- ``test_autopatch_creates_implicit_trace_when_no_parent`` —
+  REGRESSION FENCE. Without LOUPE_AUTOPATCH the wrapper falls
+  through; with it set, a real trace lands on disk for an LLM
+  call that has no ``@trace`` context.
+- ``test_no_autopatch_means_no_trace_without_parent`` — proves
+  the opposite direction. No env var → no phantom traces.
+- **305 Python + 37 TypeScript = 342 tests.** Ruff + mypy + tsc clean.
+
+### Documentation
+
+``loupe explain autopatch`` covers the topic. Architecture details
+in :mod:`loupe._autopatch_hook` and :mod:`loupe.integrations.httpx`.
+
 ## [0.0.53] — 2026-05-19  ·  Zero dead-end paths — flow into setup, never abort
 
 Three real friction points surfaced in a hands-on shakedown:

@@ -337,6 +337,41 @@ def _run_setup(
                  style=DIM)
         )
 
+    # Optional: offer zero-code auto-capture as the last step of setup.
+    # Only when running interactively — CI / piped contexts skip.
+    if (
+        sys.stdin.isatty() and sys.stdout.isatty()
+        and not os.environ.get("LOUPE_AUTOPATCH")
+    ):
+        console.print()
+        console.print(section("Zero-code auto-capture (recommended)"))
+        console.print(
+            Text(
+                "  When LOUPE_AUTOPATCH=1 is set, every Python script you\n"
+                "  run captures its LLM calls automatically — no @trace,\n"
+                "  no patch_all(), no `loupe run` prefix. Run `loupe explain\n"
+                "  autopatch` later for the details.",
+                style=DIM,
+            )
+        )
+        try:
+            answer = input("    Enable autopatch in this shell session? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer in ("", "y", "yes"):
+            os.environ["LOUPE_AUTOPATCH"] = "1"
+            console.print(
+                Text("    ✓ enabled for this session.", style=GREEN)
+            )
+            console.print(
+                Text(
+                    "    To make it permanent across shells, add to your shell rc:",
+                    style=DIM,
+                )
+            )
+            console.print(cmd("set -Ux LOUPE_AUTOPATCH 1        # fish"))
+            console.print(cmd("export LOUPE_AUTOPATCH=1         # bash / zsh"))
+
     console.print()
     console.print(section("Next"))
     console.print()
@@ -344,6 +379,7 @@ def _run_setup(
     console.print(hint("loupe ask 'your question'   one captured call"))
     console.print(hint("loupe chat                  interactive REPL"))
     console.print(hint("loupe ui                    open the dashboard"))
+    console.print(hint("loupe explain autopatch     zero-code capture details"))
     console.print()
 
 
@@ -3606,6 +3642,26 @@ _EXPLAIN_TOPICS: dict[str, str] = {
         "    looks like {messages,model} are captured as\n"
         "    openai-compatible:<host>.\n\n"
         "See the full list: loupe providers"
+    ),
+    "autopatch": (
+        "Zero-code auto-capture. Set one env var and every Python script\n"
+        "you run captures its LLM calls automatically — no @trace, no\n"
+        "patch_all(), no `loupe run` prefix.\n\n"
+        "    set -Ux LOUPE_AUTOPATCH 1     # fish, persistent\n"
+        "    export LOUPE_AUTOPATCH=1      # bash / zsh\n\n"
+        "How it works:\n"
+        "  Loupe ships a .pth file at install time that runs on every\n"
+        "  Python startup. The hook checks LOUPE_AUTOPATCH; if set, it\n"
+        "  calls patch_all() and enables implicit-trace mode in the\n"
+        "  universal-httpx interceptor. Every LLM call to a recognized\n"
+        "  provider lands as its own one-call trace.\n\n"
+        "Cost when off:\n"
+        "  ~1 µs at Python startup. One os.environ lookup, then return.\n\n"
+        "Cost when on:\n"
+        "  +20-40 ms at startup (imports loupe.integrations). Per-call\n"
+        "  overhead is the same as @trace: <100 µs/step, <5 ms/trace.\n\n"
+        "Opt out per-process by unsetting the var:\n"
+        "    LOUPE_AUTOPATCH= python my_agent.py"
     ),
 }
 

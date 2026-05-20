@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loupe"
-version = "0.0.53"
+version = "0.0.54"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -65,6 +65,10 @@ packages = ["src/loupe"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/loupe/_data/loupe-trace.schema.json" = "loupe/_data/loupe-trace.schema.json"
+# Ship loupe._autopatch.pth at the wheel ROOT so Python's site.py picks
+# it up on interpreter startup and runs `import loupe._autopatch_hook`.
+# That hook is a no-op unless LOUPE_AUTOPATCH=1 is set — see the module.
+"src/loupe/_autopatch.pth" = "loupe-autopatch.pth"
 
 [tool.ruff]
 line-length = 100

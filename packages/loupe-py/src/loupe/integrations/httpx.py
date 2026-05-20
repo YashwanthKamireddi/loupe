@@ -22,8 +22,10 @@ you'd double-record. Pick one.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json as _json
+import os
 import re
 import time
 import uuid
@@ -61,28 +63,66 @@ def patch() -> bool:
     return changed
 
 
+def _autopatch_enabled() -> bool:
+    """``LOUPE_AUTOPATCH=1`` makes the wrapper auto-create an implicit
+    one-call trace when no @trace context is active — the zero-code path.
+    """
+    return os.environ.get("LOUPE_AUTOPATCH") in ("1", "true", "yes", "on")
+
+
+@contextlib.contextmanager
+def _implicit_trace_context() -> Any:
+    """Create a one-call anonymous trace on the current asyncio task.
+
+    Yields nothing; the caller does its normal capture work inside the
+    block. On exit, the trace is finalized and written to the default
+    store. Designed to be cheap — runs only when a real LLM call is
+    about to happen and no parent trace exists.
+    """
+    # Lazy imports so the universal-httpx module stays cheap when nobody
+    # uses autopatch mode.
+    from loupe.store import default_store
+    from loupe.trace import _begin_trace, _current_trace, _finish_trace
+
+    t = _begin_trace("autopatch", "auto")
+    token = _current_trace.set(t)
+    try:
+        yield
+    except BaseException as exc:
+        t.metadata["failed"] = True
+        t.metadata["error"] = repr(exc)
+        raise
+    finally:
+        _finish_trace(t, default_store())
+        _current_trace.reset(token)
+
+
 def _wrap_sync(original: Any) -> Any:
     @functools.wraps(original)
     def wrapper(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
-        started = time.time()
-        if current_trace() is None or direct_capture_active.get():
+        if direct_capture_active.get():
             return original(self, request, *args, **kwargs)
 
+        # Classify FIRST — if this isn't an LLM call we recognize, skip
+        # the cost of starting a trace entirely.
         body = _safe_read_request_body(request)
         provider_label = _classify(request, body)
         if provider_label is None:
             return original(self, request, *args, **kwargs)
 
-        error: BaseException | None = None
-        response = None
-        try:
-            response = original(self, request, *args, **kwargs)
-            return response
-        except BaseException as exc:
-            error = exc
-            raise
-        finally:
-            _emit(provider_label, request, body, response, error, started)
+        if current_trace() is None:
+            if not _autopatch_enabled():
+                return original(self, request, *args, **kwargs)
+            # Autopatch: wrap in an implicit one-call trace.
+            with _implicit_trace_context():
+                return _emit_around(
+                    self, request, args, kwargs,
+                    original, provider_label, body,
+                )
+
+        return _emit_around(
+            self, request, args, kwargs, original, provider_label, body,
+        )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
@@ -91,8 +131,7 @@ def _wrap_sync(original: Any) -> Any:
 def _wrap_async(original: Any) -> Any:
     @functools.wraps(original)
     async def wrapper(self: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
-        started = time.time()
-        if current_trace() is None or direct_capture_active.get():
+        if direct_capture_active.get():
             return await original(self, request, *args, **kwargs)
 
         body = _safe_read_request_body(request)
@@ -100,19 +139,58 @@ def _wrap_async(original: Any) -> Any:
         if provider_label is None:
             return await original(self, request, *args, **kwargs)
 
-        error: BaseException | None = None
-        response = None
-        try:
-            response = await original(self, request, *args, **kwargs)
-            return response
-        except BaseException as exc:
-            error = exc
-            raise
-        finally:
-            _emit(provider_label, request, body, response, error, started)
+        if current_trace() is None:
+            if not _autopatch_enabled():
+                return await original(self, request, *args, **kwargs)
+            with _implicit_trace_context():
+                return await _emit_around_async(
+                    self, request, args, kwargs,
+                    original, provider_label, body,
+                )
+
+        return await _emit_around_async(
+            self, request, args, kwargs, original, provider_label, body,
+        )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
+
+
+def _emit_around(
+    self: Any, request: Any, args: tuple, kwargs: dict,
+    original: Any, provider_label: str, body: Any,
+) -> Any:
+    """Sync invoke + emit step. Extracted so the autopatch + normal paths
+    share one capture body."""
+    started = time.time()
+    error: BaseException | None = None
+    response = None
+    try:
+        response = original(self, request, *args, **kwargs)
+        return response
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        _emit(provider_label, request, body, response, error, started)
+
+
+async def _emit_around_async(
+    self: Any, request: Any, args: tuple, kwargs: dict,
+    original: Any, provider_label: str, body: Any,
+) -> Any:
+    """Async invoke + emit step."""
+    started = time.time()
+    error: BaseException | None = None
+    response = None
+    try:
+        response = await original(self, request, *args, **kwargs)
+        return response
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        _emit(provider_label, request, body, response, error, started)
 
 
 def _host_of(request: Any) -> str | None:
