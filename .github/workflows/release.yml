@@ -1,0 +1,125 @@
+name: Release
+
+# Publishing is automated + secret-free. Push a version tag and this
+# workflow builds, tests, and publishes BOTH packages:
+#   - loupe        → PyPI   via OIDC Trusted Publishing (no token)
+#   - @loupe/sdk   → npm    via OIDC Trusted Publishing + provenance
+#
+# Cut a release:
+#   1. bump the version in all four sources (the parity test enforces it)
+#   2. git tag v0.0.73 && git push origin v0.0.73
+#
+# One-time setup (see RELEASING.md) configures the trusted publishers so
+# no long-lived tokens ever live in the repo.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Gate: never publish a build that doesn't pass tests, and never let a
+  # mistagged release ship the wrong version.
+  # ---------------------------------------------------------------------
+  gate:
+    name: test + version guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/loupe-ts/package-lock.json
+
+      - name: tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PY=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' packages/loupe-py/src/loupe/_version.py | tr -d '"')
+          TS=$(node -p "require('./packages/loupe-ts/package.json').version")
+          echo "tag=$TAG  python=$PY  ts=$TS"
+          test "$TAG" = "$PY" || { echo "::error::tag v$TAG != python $PY"; exit 1; }
+          test "$TAG" = "$TS" || { echo "::error::tag v$TAG != ts $TS"; exit 1; }
+
+      - name: python tests
+        run: |
+          cd packages/loupe-py
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+          python -m pytest -q
+
+      - name: typescript tests + build
+        run: |
+          cd packages/loupe-ts
+          npm ci || npm install
+          npm test
+          npm run build
+
+  # ---------------------------------------------------------------------
+  # Publish loupe → PyPI (OIDC Trusted Publishing — no API token)
+  # ---------------------------------------------------------------------
+  publish-pypi:
+    name: publish loupe → PyPI
+    needs: gate
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # mint the OIDC token PyPI trusts
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: build sdist + wheel
+        run: |
+          cd packages/loupe-py
+          python -m pip install --upgrade build
+          python -m build
+      - name: twine check
+        run: |
+          cd packages/loupe-py
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+      - name: publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/loupe-py/dist
+
+  # ---------------------------------------------------------------------
+  # Publish @loupe/sdk → npm (OIDC Trusted Publishing + provenance)
+  # ---------------------------------------------------------------------
+  publish-npm:
+    name: publish @loupe/sdk → npm
+    needs: gate
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write   # provenance + OIDC trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: build
+        run: |
+          cd packages/loupe-ts
+          npm ci || npm install
+          npm run build
+      - name: publish to npm
+        run: |
+          cd packages/loupe-ts
+          # Modern npm (>=11.5) publishes via OIDC trusted publishing when
+          # the package is configured for it on npmjs.com — no token needed.
+          # --provenance attaches a signed build attestation either way.
+          npm install -g npm@latest
+          npm publish --provenance --access public
