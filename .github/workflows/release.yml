@@ -73,6 +73,8 @@ jobs:
     environment: pypi
     permissions:
       id-token: write   # mint the OIDC token PyPI trusts
+      contents: read    # required for actions/checkout (declaring permissions
+                        # replaces the defaults, so this must be explicit)
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
