@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -191,6 +192,25 @@ class JSONLStore:
             _schedule_index_upsert(path, traces_root=self.root)
 
 
+# In-flight background index-upsert threads. We join these at interpreter
+# exit so a DuckDB write never gets torn down mid-operation — a daemon
+# thread killed inside DuckDB's C++ layer aborts the process with
+# "terminate called without an active exception" (SIGABRT / core dump).
+# Tracking + joining keeps shutdown clean without blocking normal runs.
+_inflight_upserts: set[threading.Thread] = set()
+_inflight_lock = threading.Lock()
+_atexit_registered = False
+
+
+def _join_inflight_upserts(timeout: float = 5.0) -> None:
+    """Wait for any in-flight index upserts to finish. Registered via atexit."""
+    with _inflight_lock:
+        threads = list(_inflight_upserts)
+    deadline_each = timeout / max(1, len(threads)) if threads else 0
+    for t in threads:
+        t.join(timeout=max(0.2, deadline_each))
+
+
 def _schedule_index_upsert(path: Path, *, traces_root: Path) -> None:
     """Fire-and-forget background upsert. Never raises.
 
@@ -198,7 +218,7 @@ def _schedule_index_upsert(path: Path, *, traces_root: Path) -> None:
     write to. Captured explicitly so an env-var change between scheduling
     and execution can't redirect the write to a different home.
     """
-    import threading
+    global _atexit_registered
 
     # Compute the target index path EAGERLY, before spawning the thread,
     # while the caller's environment is still in scope.
@@ -210,10 +230,22 @@ def _schedule_index_upsert(path: Path, *, traces_root: Path) -> None:
             JSONLIndex(db_path=index_path, traces_dir=traces_root).upsert_file(path)
         except Exception:  # noqa: BLE001 — best-effort, swallow silently
             pass
+        finally:
+            with _inflight_lock:
+                _inflight_upserts.discard(threading.current_thread())
 
-    # daemon=True so the upsert thread never blocks interpreter exit. If the
-    # process dies mid-upsert, `loupe index rebuild` reconciles on next run.
-    threading.Thread(target=_run, daemon=True).start()
+    # daemon=True so a hung upsert can't wedge interpreter exit forever; the
+    # atexit join below gives clean writes time to finish first so DuckDB's
+    # native layer is never torn down mid-call. If the process dies anyway,
+    # `loupe index rebuild` reconciles on next run.
+    t = threading.Thread(target=_run, daemon=True)
+    with _inflight_lock:
+        _inflight_upserts.add(t)
+        if not _atexit_registered:
+            import atexit
+            atexit.register(_join_inflight_upserts)
+            _atexit_registered = True
+    t.start()
 
 
 _default: Store | None = None
