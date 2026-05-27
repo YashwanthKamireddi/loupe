@@ -31,7 +31,7 @@ release is rejected before anything is published.
 
 1. Create the project owner account at https://pypi.org.
 2. Go to **Publishing** → **Add a pending publisher** and enter:
-   - PyPI Project Name: `loupe`
+   - PyPI Project Name: `loupe-ai`
    - Owner: `YashwanthKamireddi`
    - Repository: `loupe`
    - Workflow name: `release.yml`
