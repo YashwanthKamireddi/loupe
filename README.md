@@ -259,7 +259,7 @@ No framework integration needed — `@trace` + `record_step` covers 100% of case
 Same primitives, same wire format, same dashboard:
 
 ```typescript
-import { trace, recordStep } from "@loupe/sdk";
+import { trace, recordStep } from "loupe-ai";
 
 const myAgent = trace({ framework: "vercel-ai-sdk" }, async (q: string) => {
   recordStep("thought", "plan");
@@ -270,7 +270,7 @@ const myAgent = trace({ framework: "vercel-ai-sdk" }, async (q: string) => {
 Plus universal `fetch` capture — same idea as the Python httpx patch but for the JS/TS ecosystem:
 
 ```typescript
-import { patchFetch } from "@loupe/sdk/universal";
+import { patchFetch } from "loupe-ai/universal";
 patchFetch();                       // once, anywhere, at startup
 
 // now anything that uses global fetch is captured:
@@ -282,7 +282,7 @@ patchFetch();                       // once, anywhere, at startup
 
 ```bash
 export LOUPE_AUTOPATCH=1
-export NODE_OPTIONS="--require @loupe/sdk/autopatch"
+export NODE_OPTIONS="--require loupe-ai/autopatch"
 node my-agent.js          # captured automatically — no imports needed
 ```
 
@@ -333,7 +333,7 @@ Works with Datadog APM, Honeycomb, Jaeger, Tempo, Grafana Cloud, New Relic, AWS 
 | Local web dashboard | FastAPI + SSE + forensic-dossier SPA — `loupe ui` | ✅ |
 | Annotation layer + `loupe tag/export` | Turn captured failures into LoupeBench JSONL | ✅ |
 | Anthropic / OpenAI / Google direct integration | Auto-traced via `patch_all()` + universal-httpx | ✅ |
-| **TypeScript SDK (`@loupe/sdk`)** | **Same `trace()` API for Vercel AI SDK / Node — same wire format, same dashboard** | ✅ |
+| **TypeScript SDK (`loupe-ai`)** | **Same `trace()` API for Vercel AI SDK / Node — same wire format, same dashboard** | ✅ |
 | **DuckDB index** | Sub-millisecond `loupe list / stats` at any scale | ✅ v0.0.38 |
 | **Real SAE circuit attribution** | `loupe attribute --backend sae` — GPT-2 small + sae-lens forward pass | ✅ v0.0.41 |
 | **Neuronpedia explanations** | `--explain` turns feature ids into readable concepts | ✅ v0.0.42 |

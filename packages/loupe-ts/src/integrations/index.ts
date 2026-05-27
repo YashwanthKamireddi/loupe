@@ -6,7 +6,7 @@
  * `loupe.integrations.patch_all`).
  *
  * @example
- *   import { patchAll } from "@loupe/sdk/integrations";
+ *   import { patchAll } from "loupe-ai/integrations";
  *   const report = await patchAll();   // { "universal-fetch": true }
  *
  * Double-capture avoidance

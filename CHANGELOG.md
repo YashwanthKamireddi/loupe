@@ -9,6 +9,27 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.73] — 2026-05-27  ·  **npm publishing: `npm install loupe-ai`**
+
+Wired up npm publishing to match the live PyPI package. The TypeScript
+SDK is renamed from the scoped `@loupe/sdk` to unscoped **`loupe-ai`**
+— identical to the PyPI name, so it's `pip install loupe-ai` AND
+`npm install loupe-ai`, no `@loupe` org to create. Import paths follow
+suit: `loupe-ai`, `loupe-ai/universal`, `loupe-ai/autopatch`, etc.
+(swept across README + every TS source docstring).
+
+The release workflow's npm job now authenticates with an `NPM_TOKEN`
+GitHub secret (the method that reliably publishes a brand-new package
+on the first try) while still attaching `--provenance` via OIDC. The
+publish is idempotent — re-running an already-published version is a
+no-op, never a hard failure — and it's no longer best-effort
+(`continue-on-error` removed) now that npm is a real target. PyPI
+publishing already landed in v0.0.72 (live at pypi.org/project/loupe-ai).
+All four version sources bumped to 0.0.73 in lockstep; 546 Python +
+44 TS tests pass.
+
+---
+
 ## [0.0.72] — 2026-05-21  ·  **Capture the error body, not just the code**
 
 Found by testing Loupe on a real third-party project (a Gemini /

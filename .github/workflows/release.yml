@@ -3,7 +3,7 @@ name: Release
 # Publishing is automated + secret-free. Push a version tag and this
 # workflow builds, tests, and publishes BOTH packages:
 #   - loupe        → PyPI   via OIDC Trusted Publishing (no token)
-#   - @loupe/sdk   → npm    via OIDC Trusted Publishing + provenance
+#   - loupe-ai   → npm    via OIDC Trusted Publishing + provenance
 #
 # Cut a release:
 #   1. bump the version in all four sources (the parity test enforces it)
@@ -99,20 +99,15 @@ jobs:
           skip-existing: true
 
   # ---------------------------------------------------------------------
-  # Publish @loupe/sdk → npm (OIDC Trusted Publishing + provenance)
+  # Publish loupe-ai → npm (NPM_TOKEN auth + signed provenance)
   # ---------------------------------------------------------------------
   publish-npm:
-    name: publish @loupe/sdk → npm
+    name: publish loupe-ai → npm
     needs: gate
     runs-on: ubuntu-latest
-    # Best-effort: until npm Trusted Publishing is configured for
-    # @loupe/sdk, this job is expected to fail — and that must NOT mark
-    # the release failed when PyPI succeeded. Once npm is set up, remove
-    # this line to make npm a hard requirement again.
-    continue-on-error: true
     environment: npm
     permissions:
-      id-token: write   # provenance + OIDC trusted publishing
+      id-token: write   # for --provenance (signed build attestation)
       contents: read
     steps:
       - uses: actions/checkout@v5
@@ -126,10 +121,17 @@ jobs:
           npm ci || npm install
           npm run build
       - name: publish to npm
+        working-directory: packages/loupe-ts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          cd packages/loupe-ts
-          # Modern npm (>=11.5) publishes via OIDC trusted publishing when
-          # the package is configured for it on npmjs.com — no token needed.
-          # --provenance attaches a signed build attestation either way.
           npm install -g npm@latest
-          npm publish --provenance --access public
+          NAME=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          # Idempotent: a re-run (or re-tag) of an already-published version
+          # is a clean no-op instead of a hard "cannot publish over" failure.
+          if npm view "$NAME@$VER" version >/dev/null 2>&1; then
+            echo "$NAME@$VER already on npm — skipping."
+          else
+            npm publish --provenance --access public
+          fi

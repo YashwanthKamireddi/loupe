@@ -1,10 +1,10 @@
 /**
- * `@loupe/sdk/autopatch` — zero-code activation of universal fetch capture.
+ * `loupe-ai/autopatch` — zero-code activation of universal fetch capture.
  *
  * Require this module at Node startup and Loupe activates capture for every
  * fetch call to a known LLM provider:
  *
- *     export NODE_OPTIONS="--require @loupe/sdk/autopatch"
+ *     export NODE_OPTIONS="--require loupe-ai/autopatch"
  *     node my-agent.js          # captured automatically
  *
  * Activation rules (mirrors the Python `.pth` hook):

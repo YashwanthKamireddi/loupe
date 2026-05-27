@@ -7,10 +7,10 @@
  * once captures all of them.
  *
  * @example
- *   import { patchFetch } from "@loupe/sdk/universal";
+ *   import { patchFetch } from "loupe-ai/universal";
  *   patchFetch();
  *
- *   import { trace } from "@loupe/sdk";
+ *   import { trace } from "loupe-ai";
  *   const myAgent = trace({ framework: "universal" }, async (q: string) => {
  *     // Use any LLM SDK that calls fetch — captured automatically.
  *     return await someClient.chat({ prompt: q });

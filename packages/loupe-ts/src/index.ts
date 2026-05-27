@@ -5,7 +5,7 @@
  * `~/.loupe/traces/{trace_id}.jsonl` and show up together in `loupe ui`.
  *
  * @example
- *   import { trace, recordStep } from "@loupe/sdk";
+ *   import { trace, recordStep } from "loupe-ai";
  *
  *   const myAgent = trace({ framework: "ai-sdk" }, async (q: string) => {
  *     recordStep("thought", "plan", { outputs: { plan: "..." } });
@@ -32,4 +32,4 @@ export type {
   TraceStore,
 } from "./types.js";
 
-export const VERSION = "0.0.72";
+export const VERSION = "0.0.73";

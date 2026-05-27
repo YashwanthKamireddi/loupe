@@ -1,7 +1,7 @@
 /**
- * `@loupe/sdk/autopatch` — zero-code capture via env var + NODE_OPTIONS.
+ * `loupe-ai/autopatch` — zero-code capture via env var + NODE_OPTIONS.
  *
- * The module ships as a side-effect import: `--require @loupe/sdk/autopatch`
+ * The module ships as a side-effect import: `--require loupe-ai/autopatch`
  * at Node startup activates `patchFetch()` iff `LOUPE_AUTOPATCH=1` is set.
  * This test exercises the *implicit-trace* behaviour added to `universal.ts`
  * — fetch calls made OUTSIDE any user-defined `trace(...)` block still

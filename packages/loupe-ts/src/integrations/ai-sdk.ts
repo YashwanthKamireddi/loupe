@@ -3,7 +3,7 @@
  * is captured as a Step on the active Loupe trace.
  *
  * @example
- *   import { wrapModel } from "@loupe/sdk/ai-sdk";
+ *   import { wrapModel } from "loupe-ai/ai-sdk";
  *   import { anthropic } from "@ai-sdk/anthropic";
  *
  *   const model = wrapModel(anthropic("claude-sonnet-4-6"));

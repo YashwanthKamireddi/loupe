@@ -42,26 +42,31 @@ release is rejected before anything is published.
 No token is created or stored — PyPI verifies the GitHub OIDC identity
 at publish time.
 
-### npm — Trusted Publishing + provenance
+### npm — NPM_TOKEN secret + signed provenance
 
-1. Create/own the `@loupe` scope at https://www.npmjs.com.
-2. On the package settings (after a first manual publish, or via the
-   org's package config), enable **Trusted Publishing** pointing at this
-   repo's `release.yml` and the `npm` environment.
-3. In the GitHub repo: **Settings → Environments → New environment →
-   `npm`**.
+The npm package is unscoped `loupe-ai` (same name as PyPI), so there's
+no org to create. Auth uses an automation token stored as a GitHub
+secret — the method that reliably publishes a brand-new package on the
+first try. `--provenance` still attaches a signed build attestation.
 
-If npm Trusted Publishing isn't enabled for the package yet, the first
-publish can be done manually:
+1. Log in at https://www.npmjs.com (the account that will own `loupe-ai`).
+2. **Account → Access Tokens → Generate New Token → Granular Access
+   Token** (or "Automation"):
+   - Expiration: choose (or "no expiration" for a set-and-forget token).
+   - Packages and scopes: **Read and write**.
+   - (Granular only) add `loupe-ai` once it exists, or allow all to
+     cover the first publish.
+   - Copy the token (starts with `npm_…`) — shown once.
+3. In the GitHub repo: **Settings → Secrets and variables → Actions →
+   New repository secret**:
+   - Name: `NPM_TOKEN`
+   - Value: the `npm_…` token
+4. **Settings → Environments → New environment → `npm`** (optional
+   reviewer gate).
 
-```bash
-cd packages/loupe-ts
-npm run build
-npm publish --provenance --access public   # requires `npm login` locally
-```
-
-After that first publish, enable Trusted Publishing so every subsequent
-tagged release is automated and tokenless.
+That's it. The next `git tag vX.Y.Z` publishes `loupe-ai` to npm with
+provenance. The publish step is idempotent — re-running an
+already-published version is a no-op, never an error.
 
 ## Pre-publish sanity (optional, local)
 

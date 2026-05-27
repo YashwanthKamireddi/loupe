@@ -11,7 +11,7 @@
  *
  * Usage:
  *   import { Agent } from "@mastra/core";
- *   import { patchMastraAgent } from "@loupe/sdk/mastra";
+ *   import { patchMastraAgent } from "loupe-ai/mastra";
  *   patchMastraAgent(Agent);
  *
  *   const agent = new Agent({ name: "writer", model: ... });
