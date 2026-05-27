@@ -202,13 +202,18 @@ _inflight_lock = threading.Lock()
 _atexit_registered = False
 
 
-def _join_inflight_upserts(timeout: float = 5.0) -> None:
-    """Wait for any in-flight index upserts to finish. Registered via atexit."""
+def _join_inflight_upserts(per_thread_timeout: float = 3.0) -> None:
+    """Wait for any in-flight index upserts to finish. Registered via atexit.
+
+    Each thread gets a full, generous timeout (not a 1/N sliver) — a
+    DuckDB write killed mid-flight at interpreter exit aborts the whole
+    process, so it's worth waiting properly. No new upserts are scheduled
+    during shutdown, so this snapshot is complete.
+    """
     with _inflight_lock:
         threads = list(_inflight_upserts)
-    deadline_each = timeout / max(1, len(threads)) if threads else 0
     for t in threads:
-        t.join(timeout=max(0.2, deadline_each))
+        t.join(timeout=per_thread_timeout)
 
 
 def _schedule_index_upsert(path: Path, *, traces_root: Path) -> None:
