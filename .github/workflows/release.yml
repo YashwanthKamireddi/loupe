@@ -94,6 +94,9 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: packages/loupe-py/dist
+          # Idempotent: re-running a release (or re-tagging) never fails on
+          # "file already exists" — it just skips versions already uploaded.
+          skip-existing: true
 
   # ---------------------------------------------------------------------
   # Publish @loupe/sdk → npm (OIDC Trusted Publishing + provenance)
@@ -102,6 +105,11 @@ jobs:
     name: publish @loupe/sdk → npm
     needs: gate
     runs-on: ubuntu-latest
+    # Best-effort: until npm Trusted Publishing is configured for
+    # @loupe/sdk, this job is expected to fail — and that must NOT mark
+    # the release failed when PyPI succeeded. Once npm is set up, remove
+    # this line to make npm a hard requirement again.
+    continue-on-error: true
     environment: npm
     permissions:
       id-token: write   # provenance + OIDC trusted publishing
