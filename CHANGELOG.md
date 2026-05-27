@@ -9,6 +9,14 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.74] — 2026-05-27  ·  **Correct package repository metadata**
+
+Pointed both packages' `repository`/`Repository` URLs at the real repo
+(`github.com/YashwanthKamireddi/loupe`) instead of a placeholder org.
+The npm package ships with `--provenance`, which signs the build against
+the GitHub source repo, so the metadata now matches the attestation and
+the "Repository" links on npm + PyPI resolve correctly. No API changes.
+
 ## [0.0.73] — 2026-05-27  ·  **npm publishing: `npm install loupe-ai`**
 
 Wired up npm publishing to match the live PyPI package. The TypeScript

@@ -1,14 +1,17 @@
 {
   "name": "loupe-ai",
-  "version": "0.0.73",
+  "version": "0.0.74",
   "description": "A magnifying glass for your AI agent — TypeScript SDK.",
   "license": "MIT",
   "author": "Yashwanth Kamireddi",
   "homepage": "https://loupe.dev",
   "repository": {
     "type": "git",
-    "url": "https://github.com/loupe-ai/loupe",
+    "url": "git+https://github.com/YashwanthKamireddi/loupe.git",
     "directory": "packages/loupe-ts"
+  },
+  "bugs": {
+    "url": "https://github.com/YashwanthKamireddi/loupe/issues"
   },
   "keywords": [
     "llm",
