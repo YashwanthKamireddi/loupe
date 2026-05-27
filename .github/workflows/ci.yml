@@ -85,7 +85,7 @@ jobs:
 
       - name: install both packages
         run: |
-          cd packages/loupe-py && pip install -e '.[ui,dev]' && cd ../..
+          cd packages/loupe-py && pip install -e '.[dev]' && cd ../..
           cd packages/loupe-ts && npm install && cd ../..
 
       - name: capture from Python
@@ -101,10 +101,14 @@ jobs:
       - name: capture from TypeScript
         run: |
           cd packages/loupe-ts && npx tsx -e "
-          import { trace, recordStep } from './src/index';
-          await trace({ framework: 'ci-ts' }, async () => {
-            recordStep({ kind: 'thought', name: 'ping', inputs: {}, outputs: { ok: true } });
-          });
+          (async () => {
+            const { trace, recordStep } = await import('./src/index');
+            // trace(opts, fn) returns a WRAPPED fn — you must call it to run.
+            const run = trace({ framework: 'ci-ts' }, async () => {
+              recordStep('thought', 'ping', { inputs: {}, outputs: { ok: true } });
+            });
+            await run();
+          })();
           "
 
       - name: assert both traces in shared ~/.loupe
