@@ -32,7 +32,7 @@ That's not engineering. That's superstition.
 ## Install (free for everyone)
 
 ```bash
-pip install loupe
+pip install loupe-ai
 ```
 
 That single line gives you the CLI, the local dashboard (`loupe ui`), the
@@ -51,14 +51,14 @@ pip install google-genai
 Or grab a framework integration when you need it:
 
 ```bash
-pip install 'loupe[langgraph]'     # LangChain / LangGraph callback handler
-pip install 'loupe[pydantic-ai]'   # Pydantic AI auto-instrumentation
-pip install 'loupe[llama-index]'   # LlamaIndex RAG capture
-pip install 'loupe[dspy]'          # DSPy module capture
-pip install 'loupe[crewai]'        # CrewAI multi-agent capture
-pip install 'loupe[autogen]'       # AutoGen ConversableAgent capture
-pip install 'loupe[openhands]'     # OpenHands coding agent capture
-pip install 'loupe[interp]'        # SAE attribution + steering (~150 MB; heavy)
+pip install 'loupe-ai[langgraph]'     # LangChain / LangGraph callback handler
+pip install 'loupe-ai[pydantic-ai]'   # Pydantic AI auto-instrumentation
+pip install 'loupe-ai[llama-index]'   # LlamaIndex RAG capture
+pip install 'loupe-ai[dspy]'          # DSPy module capture
+pip install 'loupe-ai[crewai]'        # CrewAI multi-agent capture
+pip install 'loupe-ai[autogen]'       # AutoGen ConversableAgent capture
+pip install 'loupe-ai[openhands]'     # OpenHands coding agent capture
+pip install 'loupe-ai[interp]'        # SAE attribution + steering (~150 MB; heavy)
 ```
 
 > Loupe is currently in pre-alpha; the canonical install path is `pip install -e .` from this repo until v0.1.
@@ -149,7 +149,7 @@ Tagging a step as "hallucination" tells you **what** went wrong.
 mechanism: which SAE features in the model fired during this turn.
 
 ```fish
-pip install 'loupe[interp]'                           # torch + transformer-lens + sae-lens
+pip install 'loupe-ai[interp]'                           # torch + transformer-lens + sae-lens
 loupe attribute <trace-id> --backend sae --explain    # ~7s first time, then ~200ms / step
 ```
 

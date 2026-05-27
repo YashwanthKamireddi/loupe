@@ -1338,7 +1338,7 @@ def proxy(
     except ImportError:
         console.print(
             Text("  loupe proxy needs fastapi + uvicorn + httpx.\n", style=RED)
-            + Text("  Reinstall with:  pip install --upgrade loupe", style=DIM)
+            + Text("  Reinstall with:  pip install --upgrade loupe-ai", style=DIM)
         )
         raise typer.Exit(code=1) from None
 
@@ -1830,7 +1830,7 @@ def _run_ui(
     except ImportError:
         console.print(
             Text("  loupe ui needs fastapi + uvicorn.\n", style=RED) +
-            Text("  Reinstall with:  pip install --upgrade loupe", style=DIM)
+            Text("  Reinstall with:  pip install --upgrade loupe-ai", style=DIM)
         )
         raise typer.Exit(code=1) from None
 
@@ -2212,7 +2212,7 @@ def attribute(
 
     Backends:
       * ``mock``: deterministic synthetic features, no deps.
-      * ``sae``:  real SAE attribution. Requires ``pip install 'loupe[interp]'``
+      * ``sae``:  real SAE attribution. Requires ``pip install 'loupe-ai[interp]'``
                   and a model/SAE pair.
     """
     from loupe.attribution import attribute_trace, make_attributor
@@ -4029,7 +4029,7 @@ def steer(
         console.print(
             Text(f"  ✗ steering needs loupe[interp]: {exc}", style=RED)
         )
-        console.print(hint("pip install 'loupe[interp]'"))
+        console.print(hint("pip install 'loupe-ai[interp]'"))
         raise typer.Exit(code=1) from None
 
     try:
@@ -4164,7 +4164,7 @@ def causal(
         console.print(
             Text(f"  ✗ causal attribution needs loupe[interp]: {exc}", style=RED)
         )
-        console.print(hint("pip install 'loupe[interp]'"))
+        console.print(hint("pip install 'loupe-ai[interp]'"))
         raise typer.Exit(code=1) from None
 
     try:
@@ -5362,7 +5362,7 @@ _EXPLAIN_TOPICS: dict[str, str] = {
         "Backends:\n"
         "  mock  deterministic synthetic features, no deps. CI / demos.\n"
         "  sae   real GPT-2 small + sae-lens forward pass.\n"
-        "        Requires `pip install loupe[research]`.\n\n"
+        "        Requires `pip install loupe-ai[interp]`.\n\n"
         "Run with:\n"
         "  loupe attribute <trace-id> --backend sae --explain"
     ),
@@ -5601,7 +5601,7 @@ _EXPLAIN_TOPICS: dict[str, str] = {
     "autopatch": (
         "Zero-code auto-capture for Python — on automatically after\n"
         "`loupe setup`, no env var needed.\n\n"
-        "    pip install loupe\n"
+        "    pip install loupe-ai\n"
         "    loupe setup           # picks a provider + saves the key\n"
         "    python my_agent.py    # captured automatically\n\n"
         "How it works:\n"

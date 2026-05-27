@@ -38,7 +38,7 @@ except ImportError as exc:  # pragma: no cover
     # in exotic environments (e.g. dependency-stripped containers).
     raise ImportError(
         "loupe ui requires fastapi + uvicorn. "
-        "Reinstall with `pip install --upgrade loupe`."
+        "Reinstall with `pip install --upgrade loupe-ai`."
     ) from exc
 
 from loupe.annotation import Annotation, AnnotationStore

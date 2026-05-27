@@ -424,7 +424,7 @@ def create_app(
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "loupe proxy needs fastapi + httpx. "
-            "reinstall with: pip install --upgrade loupe"
+            "reinstall with: pip install --upgrade loupe-ai"
         ) from exc
 
     target_store: Store = store or default_store()
@@ -783,7 +783,7 @@ def run(
         import uvicorn
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "loupe proxy needs uvicorn. reinstall with: pip install --upgrade loupe"
+            "loupe proxy needs uvicorn. reinstall with: pip install --upgrade loupe-ai"
         ) from exc
 
     app = create_app(

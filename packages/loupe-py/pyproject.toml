@@ -3,7 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "loupe"
+# PyPI distribution name. The import package + CLI command are both
+# `loupe` (see [tool.hatch...packages] and [project.scripts]); only the
+# pip-install name is `loupe-ai` because `loupe` was already taken.
+name = "loupe-ai"
 version = "0.0.72"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"

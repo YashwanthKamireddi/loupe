@@ -236,7 +236,7 @@ set -Ux {env_var} YOUR_KEY                # fish (persists)
 $env:{env_var}='YOUR_KEY'                 # PowerShell
 
 # 3. Install Loupe + the {display} SDK:
-pip install loupe {install_pkg}
+pip install loupe-ai {install_pkg}
 ```
 
 ## Run
