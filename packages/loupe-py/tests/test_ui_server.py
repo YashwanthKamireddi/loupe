@@ -214,3 +214,163 @@ def test_list_traces_search_empty_query_returns_all(loupe_home: Path) -> None:
     data = client.get("/api/traces?q=").json()
     assert len(data) == 2
     assert "match" not in data[0]   # no match metadata when not filtering
+
+
+# ---------------------------------------------------------------------------
+# v0.0.59 — bulk-delete endpoint (dashboard multi-trace ops)
+# ---------------------------------------------------------------------------
+
+
+def test_bulk_delete_removes_traces(loupe_home: Path) -> None:
+    """POST /api/traces/bulk-delete with a list of ids removes those JSONL
+    files and returns the deleted set."""
+    _make_named_trace(loupe_home, "agent-1")
+    _make_named_trace(loupe_home, "agent-2")
+    _make_named_trace(loupe_home, "agent-3")
+    client = TestClient(create_app())
+
+    data = client.get("/api/traces").json()
+    assert len(data) == 3
+    ids = [t["trace_id"] for t in data]
+
+    res = client.post(
+        "/api/traces/bulk-delete",
+        json={"trace_ids": [ids[0], ids[1]]},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert set(body["deleted"]) == {ids[0], ids[1]}
+    assert body["not_found"] == []
+
+    remaining = client.get("/api/traces").json()
+    assert len(remaining) == 1
+    assert remaining[0]["trace_id"] == ids[2]
+
+
+def test_bulk_delete_records_not_found_without_failing(loupe_home: Path) -> None:
+    """Unknown ids return in `not_found`, not as an error."""
+    _make_named_trace(loupe_home, "agent-real")
+    client = TestClient(create_app())
+    trace_id = client.get("/api/traces").json()[0]["trace_id"]
+
+    res = client.post(
+        "/api/traces/bulk-delete",
+        json={"trace_ids": [trace_id, "deadbeef"]},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["deleted"] == [trace_id]
+    assert body["not_found"] == ["deadbeef"]
+
+
+def test_bulk_delete_rejects_non_array(loupe_home: Path) -> None:
+    client = TestClient(create_app())
+    res = client.post("/api/traces/bulk-delete", json={"trace_ids": "not-a-list"})
+    assert res.status_code == 422
+
+
+def test_bulk_delete_caps_batch_size_at_500(loupe_home: Path) -> None:
+    """A misbehaving client must not be able to ask us to walk the whole
+    disk in one shot."""
+    client = TestClient(create_app())
+    res = client.post(
+        "/api/traces/bulk-delete",
+        json={"trace_ids": [f"id-{i}" for i in range(501)]},
+    )
+    assert res.status_code == 413
+
+
+def test_cost_timeseries_returns_zero_filled_days(loupe_home: Path) -> None:
+    """With no traces, the endpoint still returns the requested window of
+    days, each with usd=0, calls=0 — the chart needs a stable shape."""
+    client = TestClient(create_app())
+    res = client.get("/api/cost-timeseries?days=7")
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body["days"]) == 7
+    for d in body["days"]:
+        assert d["usd"] == 0
+        assert d["calls"] == 0
+        assert d["rate_limited"] == 0
+        # Must be ISO date
+        assert len(d["date"]) == 10 and d["date"][4] == "-" and d["date"][7] == "-"
+
+
+def test_cost_timeseries_clamps_huge_window(loupe_home: Path) -> None:
+    """A malicious client asking for days=10000 must not bust memory —
+    the endpoint clamps to 90."""
+    client = TestClient(create_app())
+    res = client.get("/api/cost-timeseries?days=10000")
+    assert res.status_code == 200
+    assert len(res.json()["days"]) == 90
+
+
+def test_cost_timeseries_attributes_call_to_correct_day(loupe_home: Path) -> None:
+    """A captured trace with a real model + token counts must contribute
+    to the right day's bucket."""
+    import json as _json
+    from datetime import date as _date
+
+    # Manually write a trace timestamped at today's midnight UTC.
+    trace_id = "0" * 32
+    started = (
+        _date.today().toordinal() - _date(1970, 1, 1).toordinal()
+    ) * 86400  # midnight UTC of today
+    header = {
+        "_type": "trace",
+        "trace_id": trace_id,
+        "name": "billing-demo",
+        "framework": "test",
+        "started_at": float(started),
+        "ended_at": float(started + 1),
+        "metadata": {},
+    }
+    step = {
+        "_type": "step",
+        "step_id": "stp1",
+        "parent_step_id": None,
+        "kind": "llm-call",
+        "name": "anthropic:claude-haiku-4-5",
+        "started_at": float(started),
+        "ended_at": float(started + 1),
+        "inputs": {"provider": "anthropic", "model": "claude-haiku-4-5"},
+        "outputs": {"status": 200, "input_tokens": 1000, "output_tokens": 200},
+        "metadata": {},
+        "error": None,
+    }
+    traces_dir = loupe_home / "traces"
+    traces_dir.mkdir(parents=True, exist_ok=True)
+    (traces_dir / f"{trace_id}.jsonl").write_text(
+        _json.dumps(header) + "\n" + _json.dumps(step) + "\n",
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_app())
+    res = client.get("/api/cost-timeseries?days=2")
+    assert res.status_code == 200
+    today = res.json()["days"][-1]
+    assert today["calls"] == 1
+    # claude-haiku-4-5 is priced, so usd must be > 0
+    assert today["usd"] > 0
+
+
+def test_bulk_delete_clears_annotations_alongside_trace(loupe_home: Path) -> None:
+    """Deleting a trace also removes its annotation file, so the dashboard
+    doesn't show stale tag counts after a refresh."""
+    _make_named_trace(loupe_home, "tagged-agent")
+    client = TestClient(create_app())
+    trace_id = client.get("/api/traces").json()[0]["trace_id"]
+
+    # Add an annotation directly via the API so the file is created.
+    add = client.post(
+        f"/api/traces/{trace_id}/annotations",
+        json={"step_id": "abc1", "failure_category": "off-task", "severity": "low"},
+    )
+    assert add.status_code == 200
+
+    ann_path = loupe_home / "annotations" / f"{trace_id}.json"
+    assert ann_path.exists()
+
+    res = client.post("/api/traces/bulk-delete", json={"trace_ids": [trace_id]})
+    assert res.status_code == 200
+    assert not ann_path.exists()

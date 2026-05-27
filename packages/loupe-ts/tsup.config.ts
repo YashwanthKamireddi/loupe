@@ -7,6 +7,7 @@ export default defineConfig({
     "integrations/ai-sdk": "src/integrations/ai-sdk.ts",
     "integrations/universal": "src/integrations/universal.ts",
     "integrations/mastra": "src/integrations/mastra.ts",
+    autopatch: "src/autopatch.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

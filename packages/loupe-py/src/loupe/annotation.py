@@ -119,6 +119,21 @@ class AnnotationStore:
             result[file.stem] = self.load(file.stem)
         return result
 
+    def clear(self, trace_id: str) -> bool:
+        """Delete the annotation file for ``trace_id``. Returns True if
+        a file was removed. Best-effort: missing files / OS errors return
+        False rather than raising — annotation cleanup must never block
+        trace deletion in the bulk-delete path.
+        """
+        path = self._path(trace_id)
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+
     # -- internals -----------------------------------------------------------
 
     def _path(self, trace_id: str) -> Path:

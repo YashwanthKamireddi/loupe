@@ -285,8 +285,11 @@ def test_autopatch_creates_implicit_trace_when_no_parent(
     lines = traces[0].read_text().splitlines()
     header = _json.loads(lines[0])
     assert header["_type"] == "trace"
-    assert header["name"] == "autopatch"      # implicit-trace name
-    assert header["framework"] == "auto"
+    # name = derived from sys.argv[0] stem (script filename) or "auto"
+    # fallback. framework="autopatch" is the stable signal that this came
+    # from the zero-code path.
+    assert isinstance(header["name"], str) and header["name"]
+    assert header["framework"] == "autopatch"
     # And the llm-call step is captured
     step_kinds = [
         _json.loads(line).get("kind") for line in lines[1:]
@@ -297,12 +300,14 @@ def test_autopatch_creates_implicit_trace_when_no_parent(
 def test_no_autopatch_means_no_trace_without_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Inverse: with LOUPE_AUTOPATCH unset, the universal-httpx interceptor
-    falls through silently when no @trace context exists. No phantom
-    traces, no side effects."""
+    """Inverse: with LOUPE_AUTOPATCH unset and no setup config, the
+    universal-httpx interceptor falls through silently when no @trace
+    context exists. No phantom traces, no side effects (safety guard
+    for transitive installs)."""
     monkeypatch.setenv("LOUPE_HOME", str(tmp_path))
     monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
     monkeypatch.delenv("LOUPE_AUTOPATCH", raising=False)
+    # No config.toml exists → autopatch must stay OFF
     from loupe import store as store_mod
     store_mod._default = None
 
@@ -322,6 +327,83 @@ def test_no_autopatch_means_no_trace_without_parent(
     )
 
     # No trace should have been written.
+    assert not (tmp_path / "traces").exists() or not list(
+        (tmp_path / "traces").glob("*.jsonl")
+    )
+
+
+def test_autopatch_defaults_on_when_setup_config_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v0.0.59 change: presence of ``~/.loupe/config.toml`` (i.e. the
+    user has run ``loupe setup``) flips autopatch ON without needing
+    the ``LOUPE_AUTOPATCH=1`` env var. This is the "install + setup =
+    it just works" frictionless promise."""
+    monkeypatch.setenv("LOUPE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
+    monkeypatch.delenv("LOUPE_AUTOPATCH", raising=False)
+    # Simulate having run `loupe setup`.
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.toml").write_text(
+        '[default]\nprovider = "gemini"\nmodel = "gemini-2.5-flash"\n',
+        encoding="utf-8",
+    )
+    from loupe import store as store_mod
+    store_mod._default = None
+
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    httpx._state["response"] = _make_response(
+        200,
+        {"content": [{"type": "text", "text": "hi"}]},
+    )
+
+    httpx.Client().send(
+        _make_request(
+            "https://api.anthropic.com/v1/messages",
+            body={"model": "claude-haiku-4-5", "messages": []},
+        )
+    )
+
+    # The trace should land because autopatch defaulted ON.
+    traces = list((tmp_path / "traces").glob("*.jsonl"))
+    assert len(traces) == 1
+
+
+def test_autopatch_explicit_off_overrides_default_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``LOUPE_AUTOPATCH=0`` is the explicit opt-out — it must win even
+    when the user has run setup."""
+    monkeypatch.setenv("LOUPE_HOME", str(tmp_path))
+    monkeypatch.setenv("LOUPE_DISABLE_INDEX", "1")
+    monkeypatch.setenv("LOUPE_AUTOPATCH", "0")
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.toml").write_text(
+        '[default]\nprovider = "gemini"\n', encoding="utf-8",
+    )
+    from loupe import store as store_mod
+    store_mod._default = None
+
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    httpx._state["response"] = _make_response(200, {"content": [{"text": "x"}]})
+
+    httpx.Client().send(
+        _make_request(
+            "https://api.anthropic.com/v1/messages",
+            body={"model": "x", "messages": []},
+        )
+    )
+
     assert not (tmp_path / "traces").exists() or not list(
         (tmp_path / "traces").glob("*.jsonl")
     )
@@ -352,3 +434,80 @@ def test_captures_error(store: JSONLStore) -> None:
     steps = _read_steps(store)
     assert len(steps) == 1
     assert "network down" in (steps[0]["error"] or "")
+
+
+def test_captures_error_body_on_4xx(store: JSONLStore) -> None:
+    """A failed HTTP call (4xx/5xx) must capture the provider's error
+    MESSAGE, not just the status code. Regression for the real
+    Vyuha-Mind finding where a 400 from Gemini recorded only
+    `{"status": 400}` and dropped 'API key not valid'."""
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    # Gemini-style 400 error envelope.
+    httpx._state["response"] = _make_response(  # type: ignore[attr-defined]
+        400,
+        {"error": {"code": 400,
+                   "message": "API key not valid. Please pass a valid API key.",
+                   "status": "INVALID_ARGUMENT"}},
+    )
+
+    @trace(framework="universal-test", store=store)
+    def run() -> Any:
+        return httpx.Client().send(_make_request(
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash:generateContent",
+            {"contents": [{"parts": [{"text": "hi"}], "role": "user"}]},
+        ))
+
+    run()
+    steps = _read_steps(store)
+    assert len(steps) == 1
+    s = steps[0]
+    assert s["outputs"]["status"] == 400
+    # The message is captured in BOTH the outputs and the step error.
+    assert "API key not valid" in s["outputs"].get("error", "")
+    assert "API key not valid" in (s["error"] or "")
+    assert s["error"].startswith("HTTP 400")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests (v0.0.58)
+# ---------------------------------------------------------------------------
+
+
+def test_truncate_preserves_list_structure() -> None:
+    """Lists shorter than the limit must stay as native lists, NOT be
+    stringified through ``repr()``. The earlier behaviour produced
+    invalid JSON (single quotes, ``True``/``False`` instead of
+    ``true``/``false``) that downstream parsers choked on."""
+    from loupe.integrations.httpx import _truncate
+
+    messages = [{"role": "user", "content": "hi"}]
+    out = _truncate(messages, limit=4000)
+    assert out == messages
+    assert isinstance(out, list)
+
+
+def test_truncate_preserves_dict_structure() -> None:
+    from loupe.integrations.httpx import _truncate
+
+    body = {"model": "claude-haiku-4-5", "max_tokens": 32, "stream": True}
+    out = _truncate(body, limit=4000)
+    assert out == body
+    assert isinstance(out, dict)
+
+
+def test_truncate_stringifies_only_on_overflow() -> None:
+    """Beyond the limit, a list collapses to a truncated JSON string."""
+    from loupe.integrations.httpx import _truncate
+
+    big = [{"content": "x" * 100} for _ in range(50)]
+    out = _truncate(big, limit=200)
+    assert isinstance(out, str)
+    assert out.endswith("…[truncated]")
+    # And it's JSON-shaped (double-quoted keys), not Python-repr.
+    assert '"content"' in out

@@ -75,6 +75,23 @@ _DEFAULTS: dict[str, Any] = {
     "updates": {
         "check_on_startup": True,
     },
+    # J1 — Retention policy. Off by default so existing users keep all
+    # their traces. `loupe purge --auto` reads this and applies it.
+    "retention": {
+        "max_age_days": 0,        # 0 = unlimited / disabled
+        "keep_tagged": True,      # never delete annotated traces by default
+    },
+    # J2 — Custom redaction patterns. Each is a regex tested against
+    # string values in inputs / outputs before they hit disk.
+    "redact": {
+        "patterns": [],           # additional regexes the user added
+    },
+    # J3 — Opt-in encryption-at-rest. When enabled, JSONL files are
+    # written as ciphertext blobs under ~/.loupe/traces/. Reading
+    # transparently decrypts. Off by default.
+    "encryption": {
+        "enabled": False,
+    },
 }
 
 
@@ -108,6 +125,13 @@ class Config:
     attribution_backend: str = "mock"
     index_disabled: bool = False
     check_for_updates: bool = True
+    # J1 — retention policy (config-driven auto-purge)
+    retention_max_age_days: int = 0       # 0 = unlimited
+    retention_keep_tagged: bool = True
+    # J2 — user-defined redaction regexes (added to the built-in set)
+    redact_patterns: list[str] = field(default_factory=list)
+    # J3 — encryption at rest
+    encryption_enabled: bool = False
     _path: Path | None = None
 
     # --- factory --------------------------------------------------------
@@ -148,6 +172,19 @@ class Config:
                 },
             )
 
+        retention = merged.get("retention") or {}
+        redact = merged.get("redact") or {}
+        encryption = merged.get("encryption") or {}
+
+        # User-defined redaction patterns: accept a list of strings, drop
+        # anything else silently so a broken TOML never crashes capture.
+        raw_patterns = redact.get("patterns")
+        custom_patterns: list[str] = []
+        if isinstance(raw_patterns, list):
+            for pat in raw_patterns:
+                if isinstance(pat, str) and pat:
+                    custom_patterns.append(pat)
+
         return cls(
             default_provider=str(merged["default"]["provider"]),
             default_model=str(merged["default"]["model"]),
@@ -155,6 +192,10 @@ class Config:
             attribution_backend=str(merged["attribution"]["backend"]),
             index_disabled=bool(merged["index"]["disabled"]),
             check_for_updates=bool(merged["updates"]["check_on_startup"]),
+            retention_max_age_days=_int_or_zero(retention.get("max_age_days")),
+            retention_keep_tagged=bool(retention.get("keep_tagged", True)),
+            redact_patterns=custom_patterns,
+            encryption_enabled=bool(encryption.get("enabled", False)),
             _path=p,
         )
 
@@ -180,12 +221,18 @@ class Config:
         return None
 
     def configured_providers(self) -> list[str]:
-        """Names of providers that have a usable API key (env or config)."""
-        names: list[str] = []
-        for name in sorted({"gemini", "anthropic", "openai", *self.providers.keys()}):
-            if self.api_key_for(name):
-                names.append(name)
-        return names
+        """Names of providers that have a usable API key (env or config).
+
+        Order: setup-wizard order first (gemini, anthropic, openai, …),
+        then any extra provider sections the user wrote into config.toml
+        by hand.
+        """
+        from loupe._setup_providers import labels as _setup_labels
+        known_order = _setup_labels()
+        ordered = list(known_order) + sorted(
+            n for n in self.providers if n not in set(known_order)
+        )
+        return [name for name in ordered if self.api_key_for(name)]
 
     # --- mutation -------------------------------------------------------
 
@@ -257,6 +304,20 @@ class Config:
         out.append("[updates]")
         out.append(f"check_on_startup = {str(self.check_for_updates).lower()}")
         out.append("")
+        out.append("[retention]")
+        out.append(f"max_age_days = {int(self.retention_max_age_days)}    # 0 = unlimited")
+        out.append(f"keep_tagged  = {str(self.retention_keep_tagged).lower()}")
+        out.append("")
+        out.append("[redact]")
+        if self.redact_patterns:
+            patterns = ", ".join(f'"{_escape(p)}"' for p in self.redact_patterns)
+            out.append(f"patterns = [{patterns}]")
+        else:
+            out.append("patterns = []    # add regexes like \"sk-[a-zA-Z0-9]{20,}\"")
+        out.append("")
+        out.append("[encryption]")
+        out.append(f"enabled = {str(self.encryption_enabled).lower()}")
+        out.append("")
         for name in sorted(self.providers):
             p = self.providers[name]
             if not (p.api_key or p.base_url or p.metadata):
@@ -276,14 +337,24 @@ class Config:
 
 
 def _env_keys_for(provider: str) -> tuple[str, ...]:
-    """Canonical env-var names accepted for each provider."""
-    table = {
-        "gemini":    ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-        "google":    ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-        "anthropic": ("ANTHROPIC_API_KEY",),
-        "openai":    ("OPENAI_API_KEY",),
-    }
-    return table.get(provider.lower(), ())
+    """Canonical env-var names accepted for each provider.
+
+    Pulled from the setup-provider registry so adding a provider in one
+    place flows through to config-file lookups + env-var precedence.
+    The historic "google" alias for "gemini" is preserved for users
+    upgrading from older versions.
+    """
+    from loupe._setup_providers import get
+    info = get(provider)
+    if info is not None:
+        return info.env_keys
+    # Legacy alias retained explicitly so an "[providers.google]" section
+    # in an old config file keeps resolving.
+    if provider.lower() == "google":
+        info = get("gemini")
+        if info is not None:
+            return info.env_keys
+    return ()
 
 
 def _str_or_none(value: Any) -> str | None:
@@ -292,6 +363,19 @@ def _str_or_none(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _int_or_zero(value: Any) -> int:
+    """Coerce ``value`` to a non-negative int; fall back to 0.
+
+    Used by ``[retention] max_age_days`` where a malformed value should
+    be treated as "no retention" rather than crashing the loader.
+    """
+    try:
+        n = int(value)
+        return n if n > 0 else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 def _escape(s: str) -> str:

@@ -18,7 +18,7 @@
  */
 
 import { redact } from "../_redact.js";
-import { closeStep, currentTrace, openStep } from "../trace.js";
+import { _runImplicitTrace, closeStep, currentTrace, openStep } from "../trace.js";
 import type { Step } from "../types.js";
 import { isDirectCaptureActive } from "./index.js";
 import { detectProviderFromHost, looksLikeOpenAICompatible } from "./_providers.js";
@@ -26,6 +26,42 @@ import { detectProviderFromHost, looksLikeOpenAICompatible } from "./_providers.
 const PATCH_FLAG = "__loupePatched__";
 
 type Fetchable = typeof fetch;
+
+/**
+ * Decide whether implicit-trace mode should activate when no parent
+ * trace exists. Mirrors the Python resolution order:
+ *
+ *   1. `LOUPE_AUTOPATCH=0` / false / no / off → never
+ *   2. `LOUPE_AUTOPATCH=1` / true / yes / on  → always
+ *   3. env var unset → activate iff `~/.loupe/config.toml` exists
+ *      (i.e. the user has run `loupe setup`)
+ *
+ * Keeps zero-friction symmetry across Python and TS — running
+ * `loupe setup` in either ecosystem flips the other one on.
+ */
+function autopatchEnabled(): boolean {
+  const raw =
+    typeof process !== "undefined" && process?.env?.LOUPE_AUTOPATCH !== undefined
+      ? process.env.LOUPE_AUTOPATCH ?? ""
+      : null;
+  if (raw !== null) {
+    const norm = raw.toLowerCase();
+    if (["1", "true", "yes", "on"].includes(norm)) return true;
+    if (["0", "false", "no", "off", ""].includes(norm)) return false;
+    return false;
+  }
+  try {
+    // Avoid a hard-binding require so the typecheck stays happy across
+    // bundler configs; node:fs + node:path are always available at runtime.
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const os = require("node:os") as typeof import("node:os");
+    const home = process.env.LOUPE_HOME ?? path.join(os.homedir(), ".loupe");
+    return fs.existsSync(path.join(home, "config.toml"));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Monkey-patch a `fetch`-like function so any call to a known LLM provider
@@ -61,39 +97,62 @@ function makeWrappedFetch(original: Fetchable): Fetchable {
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> {
-    const url = extractUrl(input);
-    if (!currentTrace() || isDirectCaptureActive()) {
+    if (isDirectCaptureActive()) {
       return original(input as RequestInfo, init);
     }
 
+    // Classify first — if this isn't an LLM call to a known provider, we
+    // skip both capture AND the cost of building an implicit trace.
+    const url = extractUrl(input);
     const body = parseBody(init?.body);
     const provider = classify(url, body);
     if (!provider) return original(input as RequestInfo, init);
 
-    const model = (body && typeof body === "object" && "model" in body)
-      ? (body as Record<string, unknown>).model
-      : undefined;
-
-    const step = openStep("llm-call", `${provider}:${String(model ?? "unknown")}`, {
-      inputs: summarizeInputs(provider, body, init?.method),
-      metadata: { transport: "fetch", url: stripUrl(url) },
-    });
-
-    try {
-      const response = await original(input as RequestInfo, init);
-      if (step) {
-        // Clone for inspection so the caller still gets a fully readable body.
-        await captureResponse(step, provider, response.clone());
-        closeStep(step, {
-          outputs: { ...step.outputs, status: response.status },
-        });
+    if (!currentTrace()) {
+      if (!autopatchEnabled()) {
+        return original(input as RequestInfo, init);
       }
-      return response;
-    } catch (err) {
-      if (step) closeStep(step, { error: formatError(err) });
-      throw err;
+      // Autopatch: wrap in an implicit one-call trace so the captured Step
+      // has somewhere to live. Mirrors the Python `_implicit_trace_context`.
+      return _runImplicitTrace({ name: "auto", framework: "autopatch" }, () =>
+        emitAroundFetch(original, input, init, url, body, provider),
+      );
     }
+
+    return emitAroundFetch(original, input, init, url, body, provider);
   };
+}
+
+async function emitAroundFetch(
+  original: Fetchable,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  url: string,
+  body: unknown,
+  provider: string,
+): Promise<Response> {
+  const model = (body && typeof body === "object" && "model" in body)
+    ? (body as Record<string, unknown>).model
+    : undefined;
+
+  const step = openStep("llm-call", `${provider}:${String(model ?? "unknown")}`, {
+    inputs: summarizeInputs(provider, body, init?.method),
+    metadata: { transport: "fetch", url: stripUrl(url) },
+  });
+
+  try {
+    const response = await original(input as RequestInfo, init);
+    if (step) {
+      await captureResponse(step, provider, response.clone());
+      closeStep(step, {
+        outputs: { ...step.outputs, status: response.status },
+      });
+    }
+    return response;
+  } catch (err) {
+    if (step) closeStep(step, { error: formatError(err) });
+    throw err;
+  }
 }
 
 function extractUrl(input: RequestInfo | URL): string {

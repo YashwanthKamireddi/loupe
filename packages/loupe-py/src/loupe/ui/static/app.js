@@ -10,10 +10,11 @@ const els = {
   viewer: document.getElementById("viewer"),
   template: document.getElementById("trace-view-tmpl"),
   tagForm: document.getElementById("tag-form-tmpl"),
-  helpButton: document.getElementById("help-button"),
-  helpModal: document.getElementById("help-modal"),
   liveIndicator: document.getElementById("live-indicator"),
   emptyOnboard: document.getElementById("empty-onboard"),
+  costSparkline: document.getElementById("cost-sparkline"),
+  costSparklineSvg: document.getElementById("cost-sparkline-svg"),
+  costSparklineTotal: document.getElementById("cost-sparkline-total"),
 };
 
 const state = {
@@ -24,6 +25,8 @@ const state = {
   filter: "",
   statusFilter: "all", // 'all' | 'failed' | 'tagged'
   initialLoad: true,
+  // v0.0.59 — multi-select bulk operations
+  selectedIds: new Set(),
 };
 
 function setLiveState(kind) {
@@ -153,6 +156,67 @@ async function loadTraces() {
     openTrace(state.traces[0].trace_id);
   }
   loadStats();
+  loadCostSparkline();
+}
+
+async function loadCostSparkline() {
+  if (!els.costSparkline || !els.costSparklineSvg) return;
+  try {
+    const res = await fetch("/api/cost-timeseries?days=14");
+    if (!res.ok) return;
+    const body = await res.json();
+    renderCostSparkline(body.days || []);
+  } catch (_) { /* never break the dashboard for a chart */ }
+}
+
+function renderCostSparkline(days) {
+  if (!els.costSparkline || !els.costSparklineSvg) return;
+  const total = days.reduce((s, d) => s + (d.usd || 0), 0);
+  const totalCalls = days.reduce((s, d) => s + (d.calls || 0), 0);
+  // Hide the widget until at least one call is recorded — empty bars look
+  // like a broken UI more than they look informative.
+  if (totalCalls === 0) {
+    els.costSparkline.hidden = true;
+    return;
+  }
+  els.costSparkline.hidden = false;
+  els.costSparklineTotal.textContent = formatUsd(total);
+
+  // Draw bars on a 240×36 viewBox so it scales to whatever sidebar
+  // width happens to be. Each bar gets equal width with a 1px gap.
+  const w = 240, h = 36;
+  const gap = 1;
+  const n = days.length;
+  const barW = (w - gap * (n - 1)) / n;
+  const max = days.reduce((m, d) => Math.max(m, d.usd || 0), 0) || 1;
+  const parts = [];
+  days.forEach((d, i) => {
+    const x = i * (barW + gap);
+    const usd = d.usd || 0;
+    const bh = Math.max(1, (usd / max) * h);
+    const y = h - bh;
+    const rl = d.rate_limited > 0;
+    // Fill is set via CSS class, NOT a fill="var(--…)" attribute —
+    // var() does not resolve inside SVG presentation attributes, which
+    // is why bars used to render as a broken near-white block.
+    const cls = rl ? "spark-bar-rl" : (usd > 0 ? "spark-bar" : "spark-bar-empty");
+    parts.push(
+      `<rect class="${cls}" x="${x.toFixed(2)}" y="${y.toFixed(2)}"`
+      + ` width="${barW.toFixed(2)}" height="${bh.toFixed(2)}">`
+      + `<title>${d.date} · ${formatUsd(usd)} · ${d.calls} call${d.calls === 1 ? "" : "s"}`
+      + (rl ? ` · ${d.rate_limited} rate-limited` : "")
+      + `</title></rect>`
+    );
+  });
+  els.costSparklineSvg.innerHTML = parts.join("");
+}
+
+function formatUsd(value) {
+  if (!isFinite(value) || value === 0) return "$0.00";
+  if (value < 0.01) return "<$0.01";
+  if (value < 1) return `$${value.toFixed(3)}`;
+  if (value < 100) return `$${value.toFixed(2)}`;
+  return `$${Math.round(value)}`;
 }
 
 function updateEmptyState() {
@@ -163,7 +227,7 @@ function updateEmptyState() {
   if (sub) {
     if (state.traces.length === 0) {
       sub.textContent =
-        "No captured runs yet. Below is the fastest way to put one here.";
+        "No captured runs yet. Below is the fastest way to put one here — plus what you'll see when it lands.";
     } else {
       sub.textContent = "Select a case file from the left.";
     }
@@ -171,7 +235,67 @@ function updateEmptyState() {
   if (els.emptyOnboard) {
     els.emptyOnboard.hidden = state.traces.length !== 0;
   }
+  // First-trace one-shot teaching hint. Shows on the user's very FIRST
+  // captured trace (exactly 1 trace) and only if they haven't dismissed
+  // it before. Self-dismisses after 10s of dwell time OR on close click.
+  maybeShowFirstTraceHint();
 }
+
+let _firstTraceHintTimer = null;
+let _firstTraceHintShown = false;  // session-level latch — never re-show after one display
+function maybeShowFirstTraceHint() {
+  const hint = document.getElementById("first-trace-hint");
+  if (!hint) return;
+  // Two latches: (1) once shown this session, never re-show even if the
+  // trace list refreshes back to length === 1; (2) localStorage so a
+  // returning visitor never sees it again across reloads.
+  const seen = _firstTraceHintShown
+    || localStorage.getItem("loupe.first_trace_seen") === "1";
+  if (seen || state.traces.length !== 1) {
+    hint.hidden = true;
+    return;
+  }
+  // Clear any pending timer before we set a new one — prevents stacking
+  // multiple concurrent dismisses if updateEmptyState fires repeatedly
+  // while a trace is loading.
+  if (_firstTraceHintTimer) {
+    clearTimeout(_firstTraceHintTimer);
+    _firstTraceHintTimer = null;
+  }
+  _firstTraceHintShown = true;
+  hint.hidden = false;
+
+  const dismiss = () => {
+    hint.hidden = true;
+    localStorage.setItem("loupe.first_trace_seen", "1");
+    if (_firstTraceHintTimer) {
+      clearTimeout(_firstTraceHintTimer);
+      _firstTraceHintTimer = null;
+    }
+  };
+  const closeBtn = document.getElementById("first-trace-close");
+  if (closeBtn) closeBtn.onclick = dismiss;
+  _firstTraceHintTimer = setTimeout(dismiss, 10_000);
+}
+
+// Once at boot: ask the server which shell the user runs and rewrite the
+// onboarding `export …` snippet to the right syntax. fish -> `set -Ux`,
+// PowerShell -> `$env:NAME='…'`, cmd -> `set NAME=…`, otherwise leave the
+// bash/zsh `export` default in place.
+(async function adaptOnboardingShellSnippet() {
+  try {
+    const res = await fetch("/api/onboarding");
+    if (!res.ok) return;
+    const { example } = await res.json();
+    if (!example) return;
+    const el = document.getElementById("empty-env-cmd");
+    if (!el) return;
+    el.textContent = example;
+    el.setAttribute("data-copy", example);
+  } catch (_) {
+    // never block the dashboard on a UX nicety
+  }
+})();
 
 function renderTraceList() {
   const q = state.filter.toLowerCase().trim();
@@ -208,25 +332,243 @@ function renderTraceList() {
     const li = document.createElement("li");
     li.dataset.id = t.trace_id;
     if (t.trace_id === state.traceId) li.classList.add("active");
+    if (state.selectedIds.has(t.trace_id)) li.classList.add("selected");
     const failed = t.metadata?.failed;
     const tagPill = t.annotation_count > 0
       ? `<span class="t-tag-pill">${t.annotation_count} tag${t.annotation_count > 1 ? "s" : ""}</span>`
       : "";
     const dur = formatDuration(traceDurationMs(t));
     const rel = formatRelative(t.started_at);
+    const checked = state.selectedIds.has(t.trace_id) ? "checked" : "";
     li.innerHTML = `
-      <div class="t-name">${escapeHtml(t.name)}${tagPill}</div>
-      <div class="t-meta">
-        <span>${escapeHtml(t.framework || "—")}</span>
-        <span>${t.step_count} ${t.step_count === 1 ? "step" : "steps"}</span>
-        <span>${dur}</span>
-        <span>${rel}</span>
+      <input type="checkbox" class="t-select" data-id="${t.trace_id}" ${checked}
+             aria-label="Select trace ${escapeHtml(t.name)}" tabindex="-1">
+      <div class="t-body">
+        <div class="t-name">${escapeHtml(t.name)}${tagPill}</div>
+        <div class="t-meta">
+          <span>${escapeHtml(t.framework || "—")}</span>
+          <span>${t.step_count} ${t.step_count === 1 ? "step" : "steps"}</span>
+          <span>${dur}</span>
+          <span>${rel}</span>
+        </div>
       </div>
       <div class="t-status ${failed ? "failed" : "ok"}">${failed ? "failed" : "ok"}</div>
     `;
-    li.addEventListener("click", () => openTrace(t.trace_id));
+    const checkbox = li.querySelector(".t-select");
+    checkbox.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleSelection(t.trace_id);
+    });
+    li.addEventListener("click", (e) => {
+      // Clicking the checkbox is already handled; clicking the row body
+      // opens the trace as before.
+      if (e.target.closest(".t-select")) return;
+      openTrace(t.trace_id);
+    });
     els.list.appendChild(li);
   });
+  renderBulkActionBar();
+}
+
+
+/* ----- bulk selection ---------------------------------------------------- */
+
+function toggleSelection(traceId) {
+  if (state.selectedIds.has(traceId)) state.selectedIds.delete(traceId);
+  else state.selectedIds.add(traceId);
+  renderTraceList();
+}
+
+function clearSelection() {
+  state.selectedIds.clear();
+  renderTraceList();
+}
+
+function renderBulkActionBar() {
+  let bar = document.getElementById("bulk-bar");
+  const n = state.selectedIds.size;
+  if (n === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "bulk-bar";
+    bar.className = "bulk-bar";
+    document.body.appendChild(bar);
+  }
+  const label = `${n} selected`;
+  // G3: "Diff" only makes sense for 2+ traces. Hide the button when n=1.
+  const diffBtn = n >= 2
+    ? `<button type="button" class="bulk-btn" id="bulk-diff">Diff</button>`
+    : "";
+  bar.innerHTML = `
+    <span class="bulk-count">${label}</span>
+    ${diffBtn}
+    <button type="button" class="bulk-btn danger" id="bulk-delete">Delete</button>
+    <button type="button" class="bulk-btn" id="bulk-clear">Clear</button>
+  `;
+  bar.querySelector("#bulk-clear").addEventListener("click", clearSelection);
+  bar.querySelector("#bulk-delete").addEventListener("click", bulkDelete);
+  bar.querySelector("#bulk-diff")?.addEventListener("click", openMultiDiff);
+}
+
+/* G3 — Side-by-side diff for 2+ selected traces.
+   Opens a full-viewer overlay with one column per trace. Each column
+   shows trace name + step list. Common steps (same kind+name in same
+   position) are visually aligned. Different steps are highlighted. */
+async function openMultiDiff() {
+  const ids = Array.from(state.selectedIds);
+  if (ids.length < 2) return;
+  if (ids.length > 4) {
+    alert("Diff supports up to 4 traces at a time. Reduce the selection.");
+    return;
+  }
+
+  // Fetch every selected trace in parallel.
+  let traces;
+  try {
+    traces = await Promise.all(
+      ids.map((id) => fetch(`/api/traces/${id}`).then((r) => {
+        if (!r.ok) throw new Error(`trace ${id.slice(0, 8)} not found`);
+        return r.json();
+      })),
+    );
+  } catch (err) {
+    alert(`Could not load traces for diff: ${err.message}`);
+    return;
+  }
+
+  renderMultiDiff(traces);
+}
+
+function renderMultiDiff(traces) {
+  // Pin the diff to the viewer panel so the user can still see the
+  // sidebar for picking new traces.
+  const cols = traces.length;
+  const maxSteps = Math.max(...traces.map((t) => t.steps.length));
+
+  // Compute per-row alignment status: if every trace has a step at
+  // this index with the SAME `kind` and `name`, mark it aligned;
+  // otherwise highlight the column whose step differs.
+  const rows = [];
+  for (let i = 0; i < maxSteps; i++) {
+    const stepsAtI = traces.map((t) => t.steps[i]);
+    const sig = stepsAtI.map((s) => s ? `${s.kind}:${s.name}` : "");
+    const allSame = sig.every((x) => x && x === sig[0]);
+    rows.push({ index: i, stepsAtI, aligned: allSame });
+  }
+
+  const headerHtml = traces.map((t) => {
+    const failed = t.metadata?.failed;
+    return `
+      <div class="diff-col-head">
+        <div class="diff-col-name">${escapeHtml(t.name)}</div>
+        <div class="diff-col-meta">
+          <span>${escapeHtml(t.framework || "—")}</span>
+          <span class="pill ${failed ? "failed" : "ok"}">${failed ? "failed" : "ok"}</span>
+        </div>
+        <div class="diff-col-id mono">${t.trace_id.slice(0, 12)}</div>
+      </div>
+    `;
+  }).join("");
+
+  const rowsHtml = rows.map((row) => {
+    const cells = row.stepsAtI.map((s) => {
+      if (!s) {
+        return `<div class="diff-cell diff-cell-empty">—</div>`;
+      }
+      const kindClass = `diff-cell-${escapeHtml(s.kind || "custom")}`;
+      const errBadge = s.error ? `<span class="diff-cell-err">×</span>` : "";
+      const ms = stepDurationMs(s);
+      return `
+        <div class="diff-cell ${kindClass} ${row.aligned ? "" : "diff-cell-divergent"}">
+          <div class="diff-cell-head">
+            <span class="diff-cell-kind">${escapeHtml(s.kind)}</span>
+            ${errBadge}
+          </div>
+          <div class="diff-cell-name">${escapeHtml(s.name)}</div>
+          <div class="diff-cell-meta">${formatDuration(ms)}</div>
+        </div>
+      `;
+    }).join("");
+    return `
+      <div class="diff-row" style="grid-template-columns: 40px repeat(${cols}, 1fr);">
+        <div class="diff-row-num">${row.index + 1}</div>
+        ${cells}
+      </div>
+    `;
+  }).join("");
+
+  els.viewer.innerHTML = `
+    <div class="diff-view">
+      <div class="diff-toolbar">
+        <h2 class="diff-title">Diff · ${cols} traces</h2>
+        <button type="button" class="btn-ghost" id="diff-close">Close ×</button>
+      </div>
+      <div class="diff-cols-head" style="grid-template-columns: 40px repeat(${cols}, 1fr);">
+        <div></div>
+        ${headerHtml}
+      </div>
+      <div class="diff-rows">${rowsHtml || '<div class="empty-state">No steps to compare.</div>'}</div>
+    </div>
+  `;
+  document.getElementById("diff-close")?.addEventListener("click", () => {
+    state.traceId = null;
+    state.trace = null;
+    renderEmptyViewer();
+  });
+}
+
+function renderEmptyViewer() {
+  // Restore the empty-state placeholder we shipped in index.html.
+  els.viewer.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-mark">◉</div>
+      <h1 class="empty-title">Inspect agent runs.</h1>
+      <p class="empty-sub" id="empty-state-sub">Pick a trace from the sidebar.</p>
+    </div>
+  `;
+}
+
+async function bulkDelete() {
+  const ids = Array.from(state.selectedIds);
+  if (ids.length === 0) return;
+  const word = ids.length === 1 ? "trace" : "traces";
+  if (!confirm(`Delete ${ids.length} ${word}? This cannot be undone.`)) return;
+  try {
+    const res = await fetch("/api/traces/bulk-delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ trace_ids: ids }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      alert(`Delete failed: ${res.status} ${detail.slice(0, 200)}`);
+      return;
+    }
+    const body = await res.json();
+    const deletedSet = new Set(body.deleted || []);
+    // Filter out deleted (matched on prefix); the server returns full ids.
+    state.traces = state.traces.filter((t) => {
+      // Match by exact id OR by prefix that matches what user selected.
+      if (deletedSet.has(t.trace_id)) return false;
+      for (const sel of ids) {
+        if (t.trace_id.startsWith(sel) && deletedSet.has(t.trace_id)) return false;
+      }
+      return true;
+    });
+    if (state.traceId && deletedSet.has(state.traceId)) {
+      state.traceId = null;
+      state.trace = null;
+      if (els.viewer) els.viewer.innerHTML = "";
+      if (els.summary) els.summary.innerHTML = "";
+    }
+    state.selectedIds.clear();
+    renderTraceList();
+  } catch (err) {
+    alert(`Delete failed: ${err}`);
+  }
 }
 
 async function openTrace(traceId) {
@@ -239,6 +581,38 @@ async function openTrace(traceId) {
   });
   state.trace = await (await fetch(`/api/traces/${traceId}`)).json();
   renderTrace();
+  // G6: keep the URL in sync so a deep-link `#trace-<id>` survives reload.
+  try {
+    const hash = `#trace-${traceId}`;
+    if (location.hash !== hash) {
+      history.replaceState(null, "", hash);
+    }
+  } catch (_) { /* noop */ }
+}
+
+/* G6 — Resolve any deep-link on first paint. URL fragments we honour:
+     #trace-<full-or-prefix>             open that trace
+     #trace-<id>/step-<step-id>          open that trace, then that step
+*/
+function resolveDeepLink() {
+  const hash = location.hash.replace(/^#/, "");
+  if (!hash) return;
+  const m = hash.match(/^trace-([^/]+)(?:\/step-(.+))?$/);
+  if (!m) return;
+  const [, tracePrefix, stepId] = m;
+  const trace = state.traces.find(
+    (t) => t.trace_id === tracePrefix || t.trace_id.startsWith(tracePrefix),
+  );
+  if (!trace) return;
+  openTrace(trace.trace_id).then(() => {
+    if (!stepId) return;
+    const steps = Array.from(document.querySelectorAll(".step-list li"));
+    const target = steps.find(
+      (el) => el.dataset.stepId === stepId
+            || el.dataset.stepId?.startsWith(stepId),
+    );
+    target?.click();
+  });
 }
 
 /* ----- main trace render ------------------------------------------------- */
@@ -293,6 +667,7 @@ function renderTrace() {
     const liEl = document.createElement("li");
     liEl.className = `kind-${step.kind}`;
     if (step.error) liEl.classList.add("failed");
+    liEl.dataset.stepId = step.step_id;
     liEl.innerHTML = `
       <span class="step-main">
         <span class="kind-chip">${escapeHtml(step.kind)}</span>
@@ -381,20 +756,170 @@ function renderDetail(step, ann) {
     `);
   }
 
+  // G2: render messages (and the model's reply) as a chat thread when
+  // we have the data. The raw JSON view is still shown below for power
+  // users — collapsed by default so it doesn't fight the bubbles.
+  const messages = step.inputs?.messages;
+  const replyText = step.outputs?.text;
+  const renderedAsChat = renderConversation(out, step.inputs, replyText, messages);
+
   if (step.inputs && Object.keys(step.inputs).length > 0) {
-    out.push(`<div class="section-h">inputs</div>`);
-    out.push(`<pre>${escapeHtml(prettyJson(step.inputs))}</pre>`);
+    out.push(`
+      <details class="json-fold" ${renderedAsChat ? "" : "open"}>
+        <summary class="section-h" title="The data your code passed to the model — prompts, messages, tool arguments, model name.">inputs (raw JSON)</summary>
+        <pre>${escapeHtml(prettyJson(step.inputs))}</pre>
+      </details>
+    `);
   }
   if (step.outputs && Object.keys(step.outputs).length > 0) {
-    out.push(`<div class="section-h">outputs</div>`);
-    out.push(`<pre>${escapeHtml(prettyJson(step.outputs))}</pre>`);
+    out.push(`
+      <details class="json-fold" ${renderedAsChat ? "" : "open"}>
+        <summary class="section-h" title="What the model returned, plus token counts and any tool-call requests.">outputs (raw JSON)</summary>
+        <pre>${escapeHtml(prettyJson(step.outputs))}</pre>
+      </details>
+    `);
   }
   if (step.metadata && Object.keys(step.metadata).length > 0) {
-    out.push(`<div class="section-h">metadata</div>`);
-    out.push(`<pre>${escapeHtml(prettyJson(step.metadata))}</pre>`);
+    out.push(`
+      <details class="json-fold">
+        <summary class="section-h" title="Loupe-added context: latency, HTTP status, framework, rate-limit signals.">metadata</summary>
+        <pre>${escapeHtml(prettyJson(step.metadata))}</pre>
+      </details>
+    `);
   }
 
   return out.join("");
+}
+
+/* G2 — Conversation bubbles. Renders inputs.messages as a chat thread,
+   with each role colored differently. The assistant reply (outputs.text)
+   is appended as one more bubble below.
+
+   Returns true iff we actually rendered bubbles, so the caller can decide
+   whether to collapse the raw-JSON fallback. */
+function renderConversation(out, inputs, replyText, messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    // Gemini-style alternative: inputs.contents = [{role, parts:[{text}]}]
+    const contents = inputs?.contents;
+    if (Array.isArray(contents) && contents.length > 0) {
+      return renderGeminiContents(out, contents, replyText);
+    }
+    return false;
+  }
+
+  const bubbles = [];
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const role = (m.role || "user").toLowerCase();
+    bubbles.push(renderBubble(role, m));
+  }
+  if (replyText) {
+    bubbles.push(renderBubble("assistant",
+      { role: "assistant", content: replyText, _is_reply: true }));
+  }
+  if (bubbles.length === 0) return false;
+
+  out.push(`<div class="section-h">conversation</div>`);
+  out.push(`<div class="convo">${bubbles.join("")}</div>`);
+  return true;
+}
+
+function renderGeminiContents(out, contents, replyText) {
+  const bubbles = [];
+  for (const c of contents) {
+    const role = (c.role || "user").toLowerCase();
+    const parts = c.parts || [];
+    const text = parts
+      .filter((p) => typeof p?.text === "string")
+      .map((p) => p.text)
+      .join("\n");
+    const hasMedia = parts.some(
+      (p) => p?.inlineData?._loupe_media || p?.fileData,
+    );
+    bubbles.push(renderBubble(role, {
+      role,
+      content: text || (hasMedia ? "[image]" : "[empty]"),
+    }));
+  }
+  if (replyText) {
+    bubbles.push(renderBubble("model",
+      { role: "model", content: replyText, _is_reply: true }));
+  }
+  if (bubbles.length === 0) return false;
+  out.push(`<div class="section-h">conversation</div>`);
+  out.push(`<div class="convo">${bubbles.join("")}</div>`);
+  return true;
+}
+
+function renderBubble(role, m) {
+  const norm = role === "model" ? "assistant"
+             : role === "tool"  ? "tool"
+             : role === "system" ? "system"
+             : role === "user" ? "user"
+             : "assistant";
+  const text = bubbleText(m);
+  const toolCalls = Array.isArray(m.tool_calls) ? m.tool_calls : null;
+  const tcHtml = toolCalls
+    ? `<div class="bubble-tools">${
+        toolCalls.map((tc) => {
+          const fn = tc.function || tc;
+          const name = escapeHtml(fn.name || "?");
+          const args = escapeHtml(
+            typeof fn.arguments === "string"
+              ? fn.arguments
+              : prettyJson(fn.arguments || {}),
+          );
+          return `<div class="bubble-tool"><span class="bt-name">→ ${name}(</span><span class="bt-args">${args}</span><span class="bt-name">)</span></div>`;
+        }).join("")
+      }</div>`
+    : "";
+  const label = norm.charAt(0).toUpperCase() + norm.slice(1);
+  const replyMark = m._is_reply ? '<span class="bubble-reply-mark"></span>' : "";
+  return `
+    <div class="bubble bubble-${norm}">
+      <div class="bubble-role">${label}${replyMark}</div>
+      <div class="bubble-body">${text ? escapeHtml(text) : ""}${tcHtml}</div>
+    </div>
+  `;
+}
+
+function bubbleText(m) {
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) {
+    // Anthropic content blocks: text + tool_use + image(_loupe_media)
+    const pieces = [];
+    for (const block of m.content) {
+      if (!block || typeof block !== "object") continue;
+      if (block.type === "text" && typeof block.text === "string") {
+        pieces.push(block.text);
+      } else if (block.type === "tool_use") {
+        pieces.push(`[tool_use ${block.name || "?"}]`);
+      } else if (block.type === "tool_result") {
+        const tr = typeof block.content === "string"
+          ? block.content
+          : prettyJson(block.content || {});
+        pieces.push(`[tool_result] ${tr}`);
+      } else if (block.type === "image" || block.type === "image_url") {
+        const src = block.source || block.image_url || {};
+        if (src._loupe_media) {
+          pieces.push(`[image · ${src.media_type || "image"} · ${humanBytes(src.size_bytes)}]`);
+        } else {
+          pieces.push("[image]");
+        }
+      } else if (block.inlineData?._loupe_media) {
+        pieces.push(`[media · ${block.inlineData.media_type} · ${humanBytes(block.inlineData.size_bytes)}]`);
+      }
+    }
+    return pieces.join("\n");
+  }
+  return "";
+}
+
+function humanBytes(n) {
+  if (typeof n !== "number" || !isFinite(n)) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
 function renderAnnotationCard(ann) {
@@ -476,14 +1001,49 @@ function attachDetailHandlers(detail, step, ann) {
       else if (action === "copy-id") copyToClipboard(step.step_id, btn);
     });
   });
+
+  // G6 — attach a copy-on-click button to every `<pre>` in the detail
+  // panel. Hovers reveal the button; clicking copies the raw text.
+  detail.querySelectorAll("pre").forEach((pre) => {
+    if (pre.dataset.copyAttached) return;
+    pre.dataset.copyAttached = "1";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pre-copy-btn";
+    btn.textContent = "Copy";
+    btn.setAttribute("aria-label", "Copy this block");
+    pre.appendChild(btn);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      copyToClipboard(pre.textContent.replace(/Copy$/, "").trim(), btn);
+    });
+  });
+
 }
 
 function copyToClipboard(text, btn) {
-  navigator.clipboard?.writeText(text).then(() => {
+  const setCopied = () => {
     const original = btn.textContent;
     btn.textContent = "Copied";
     setTimeout(() => { btn.textContent = original; }, 1200);
-  });
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(setCopied, () => fallbackCopy(text, setCopied));
+  } else {
+    fallbackCopy(text, setCopied);
+  }
+}
+
+function fallbackCopy(text, ok) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); ok(); }
+  catch (_) { /* clipboard simply unavailable */ }
+  ta.remove();
 }
 
 function openTagForm(step, ann) {
@@ -594,65 +1154,6 @@ els.filterBar?.querySelectorAll(".filter-chip").forEach((btn) => {
   });
 });
 
-// Help modal
-function openHelp() { els.helpModal.hidden = false; }
-function closeHelp() { els.helpModal.hidden = true; }
-els.helpButton?.addEventListener("click", openHelp);
-els.helpModal?.addEventListener("click", (e) => {
-  if (e.target === els.helpModal || e.target.matches("[data-close-modal]")) closeHelp();
-});
-
-document.addEventListener("keydown", (e) => {
-  const activeTag = document.activeElement?.tagName;
-  const inInput = activeTag && ["INPUT", "TEXTAREA", "SELECT"].includes(activeTag);
-
-  // Esc always closes modal
-  if (e.key === "Escape") { closeHelp(); return; }
-  if (inInput) return;
-
-  // Step navigation: ↑ / ↓ / j / k
-  if (["ArrowDown", "ArrowUp", "j", "k"].includes(e.key)) {
-    const items = Array.from(document.querySelectorAll(".step-list li"));
-    if (!items.length) return;
-    const cur = items.findIndex((el) => el.classList.contains("active"));
-    const dir = (e.key === "ArrowDown" || e.key === "j") ? 1 : -1;
-    const next = Math.max(0, Math.min(items.length - 1, cur + dir));
-    if (items[next]) {
-      items[next].click();
-      e.preventDefault();
-    }
-    return;
-  }
-
-  // Tag selected step: t
-  if (e.key === "t" && state.trace && state.stepIdx >= 0) {
-    const detail = els.viewer.querySelector("[data-detail]");
-    const tagBtn = detail?.querySelector('[data-action="tag"], [data-action="retag"]');
-    if (tagBtn) { tagBtn.click(); e.preventDefault(); }
-    return;
-  }
-
-  // Export markdown: e
-  if (e.key === "e" && state.traceId) {
-    exportCurrentTraceMarkdown();
-    e.preventDefault();
-    return;
-  }
-
-  // Focus search: /
-  if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
-    els.search.focus();
-    e.preventDefault();
-    return;
-  }
-
-  // Help: ?
-  if (e.key === "?" || (e.shiftKey && e.key === "/")) {
-    openHelp();
-    e.preventDefault();
-  }
-});
-
 /* ----- live updates via SSE --------------------------------------------- */
 
 let _eventSource = null;
@@ -705,179 +1206,9 @@ document.addEventListener("click", (e) => {
 });
 
 setLiveState("connecting");
-loadTraces();
+loadTraces().then(resolveDeepLink);
 subscribeToEvents();
 
-/* =========================================================================
-   First-visit guided tour
-   =========================================================================
-   Shown ONCE per browser (gated by localStorage["loupe.tour.seen"]).
-   Re-triggerable via the "Tour" button in the sidebar footer.
-   ========================================================================= */
-
-const TOUR_STEPS = [
-  {
-    target: ".brand",
-    title: "Welcome to Loupe",
-    body: "This is your local forensic dashboard for AI agents. Every captured agent run lives in a single JSONL file under ~/.loupe/traces — and shows up here.",
-    placement: "below",
-  },
-  {
-    target: "#trace-list",
-    title: "Case files",
-    body: "Every captured run is a case file in this sidebar. The pulse on the right marks live updates streaming in.",
-    placement: "right",
-  },
-  {
-    target: "#filter-bar",
-    title: "Filter chips",
-    body: "Cut to what matters: only failed runs, only tagged runs, or everything. Combine with the search box above for step-content match.",
-    placement: "right",
-  },
-  {
-    target: "#viewer",
-    title: "Evidence pane",
-    body: "Click a case file to see its timeline, the step-by-step trail, every input / output, and — when you've run `loupe attribute` — the SAE circuit features that fired during the LLM call.",
-    placement: "left",
-  },
-  {
-    target: "#tour-button",
-    title: "Need this again?",
-    body: "Tap the Tour button down here any time to replay. Press ? for the keyboard-shortcut cheat sheet.",
-    placement: "above",
-  },
-];
-
-const TOUR_KEY = "loupe.tour.seen";
-const tour = {
-  index: 0,
-  active: false,
-  els: {
-    overlay: document.getElementById("tour"),
-    spot: document.getElementById("tour-spot"),
-    title: document.getElementById("tour-title"),
-    body: document.getElementById("tour-body"),
-    progress: document.getElementById("tour-progress"),
-    stepLabel: document.getElementById("tour-step-label"),
-    next: document.getElementById("tour-next"),
-    back: document.getElementById("tour-back"),
-    skip: document.getElementById("tour-skip"),
-    card: document.querySelector(".tour-card"),
-    trigger: document.getElementById("tour-button"),
-  },
-};
-
-function startTour(opts = {}) {
-  tour.active = true;
-  tour.index = 0;
-  tour.els.overlay.hidden = false;
-  // Reflow then flip the attribute so the CSS transition fires.
-  requestAnimationFrame(() => tour.els.overlay.setAttribute("aria-hidden", "false"));
-  // Build the progress dots once per session.
-  tour.els.progress.innerHTML = TOUR_STEPS.map(() => "<span></span>").join("");
-  renderTourStep();
-  if (!opts.silent) localStorage.setItem(TOUR_KEY, "1");
-}
-
-function endTour() {
-  tour.active = false;
-  tour.els.overlay.setAttribute("aria-hidden", "true");
-  setTimeout(() => { tour.els.overlay.hidden = true; }, 200);
-  localStorage.setItem(TOUR_KEY, "1");
-}
-
-function renderTourStep() {
-  const step = TOUR_STEPS[tour.index];
-  const target = document.querySelector(step.target);
-  if (!target) {
-    // Skip steps whose anchor isn't on the page (e.g. trace-list empty).
-    if (tour.index < TOUR_STEPS.length - 1) {
-      tour.index += 1;
-      renderTourStep();
-      return;
-    }
-    endTour();
-    return;
-  }
-  // Place the spotlight over the target.
-  const rect = target.getBoundingClientRect();
-  const PAD = 6;
-  Object.assign(tour.els.spot.style, {
-    top: `${rect.top - PAD}px`,
-    left: `${rect.left - PAD}px`,
-    width: `${rect.width + 2 * PAD}px`,
-    height: `${rect.height + 2 * PAD}px`,
-  });
-  // Place the card adjacent to the spot.
-  const cardW = 360;
-  const cardH = 220;
-  const gap = 16;
-  let top = rect.bottom + gap;
-  let left = rect.left;
-  switch (step.placement) {
-    case "above":
-      top = rect.top - cardH - gap;
-      left = Math.max(16, rect.left);
-      break;
-    case "right":
-      top = rect.top;
-      left = rect.right + gap;
-      break;
-    case "left":
-      top = rect.top;
-      left = Math.max(16, rect.left - cardW - gap);
-      break;
-    default: /* below */
-      top = rect.bottom + gap;
-      left = Math.max(16, rect.left);
-  }
-  // Keep within viewport
-  top = Math.min(top, window.innerHeight - cardH - 16);
-  top = Math.max(top, 16);
-  left = Math.min(left, window.innerWidth - cardW - 16);
-  left = Math.max(left, 16);
-  Object.assign(tour.els.card.style, {
-    top: `${top}px`,
-    left: `${left}px`,
-  });
-  // Content
-  tour.els.title.textContent = step.title;
-  tour.els.body.textContent = step.body;
-  tour.els.stepLabel.textContent = `Step ${tour.index + 1} of ${TOUR_STEPS.length}`;
-  tour.els.back.hidden = tour.index === 0;
-  tour.els.next.textContent =
-    tour.index === TOUR_STEPS.length - 1 ? "Done" : "Next →";
-  // Progress dots
-  [...tour.els.progress.children].forEach((dot, i) => {
-    dot.classList.toggle("is-done",  i <  tour.index);
-    dot.classList.toggle("is-active", i === tour.index);
-  });
-}
-
-tour.els.next.addEventListener("click", () => {
-  if (tour.index >= TOUR_STEPS.length - 1) {
-    endTour();
-    return;
-  }
-  tour.index += 1;
-  renderTourStep();
-});
-tour.els.back.addEventListener("click", () => {
-  if (tour.index === 0) return;
-  tour.index -= 1;
-  renderTourStep();
-});
-tour.els.skip.addEventListener("click", endTour);
-tour.els.trigger?.addEventListener("click", () => startTour());
-
-window.addEventListener("resize", () => {
-  if (tour.active) renderTourStep();
-});
-
-// Auto-launch on first visit, after the page has settled.
-if (!localStorage.getItem(TOUR_KEY)) {
-  setTimeout(() => startTour(), 600);
-}
 
 /* =========================================================================
    Inline "?" tooltips on technical terms

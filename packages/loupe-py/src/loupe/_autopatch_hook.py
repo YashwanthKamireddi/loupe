@@ -1,17 +1,28 @@
-"""Site-time autopatch hook — opt-in via ``LOUPE_AUTOPATCH=1``.
+"""Site-time autopatch hook — on by default whenever a provider key
+is detectable, no manual setup required.
 
-When this module is imported (via the shipped ``loupe-autopatch.pth``
-file on every Python startup), it checks one env var:
+This module runs at every Python interpreter startup via the shipped
+``loupe-autopatch.pth`` file. Whether it activates capture depends on:
 
-    LOUPE_AUTOPATCH=1
+    1. ``LOUPE_AUTOPATCH=0`` (off, false, no, "") → never activate
+       (explicit opt-out — always honored, even with a config + env key)
+    2. ``LOUPE_AUTOPATCH=1`` (or true / yes / on) → activate now
+       (explicit opt-in)
+    3. Env var unset:
+         • ``~/.loupe/config.toml`` exists → activate
+           (the user ran ``loupe setup``; we honour their intent)
+         • any provider env var detected (``OPENAI_API_KEY``,
+           ``ANTHROPIC_API_KEY``, ``GEMINI_API_KEY``,
+           ``GOOGLE_API_KEY``, ``MISTRAL_API_KEY``,
+           ``GROQ_API_KEY``, ``DEEPSEEK_API_KEY``) → activate
+           (zero-friction: a key is already in the environment, so the
+           user clearly intends to call an LLM — capture the calls)
+         • neither config nor any key   → do nothing
+           (probably a transitive install; never surprise people)
 
-If set, Loupe activates ``patch_all()`` immediately AND enables
-"implicit trace" mode in the universal-httpx interceptor, so every
-LLM call captures **without any code changes** in the user's script.
-
-Without the env var, this module is a near-no-op (one ``os.environ``
-lookup) so users who installed Loupe but aren't using it right now
-don't pay an import-time penalty on every Python startup.
+Hot path when off: a few ``os.environ.get`` checks + one ``Path.exists``
+= still <10µs at Python startup, no imports, no side effects on the
+user's program.
 
 Why a .pth file
 ---------------
@@ -20,14 +31,60 @@ files at interpreter startup and executes any ``import`` statements
 they contain. This is the only mechanism that runs *before* the user's
 ``my_agent.py`` imports its LLM SDK — which is when we need to patch.
 
-Implementation deliberately keeps the imports lazy and the failure
-modes silent. A broken Loupe install must never break the user's
-Python.
+A broken Loupe install must never break the user's Python — every
+exception below is swallowed silently.
 """
 
 from __future__ import annotations
 
 import os
+
+# Provider env vars Loupe knows how to capture. Kept in sync with
+# loupe._setup_providers.SETUP_PROVIDERS; duplicated here so the .pth
+# hot path doesn't have to import the heavier provider registry.
+_PROVIDER_ENV_VARS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "DEEPSEEK_API_KEY",
+)
+
+
+def _any_provider_env_var_set() -> bool:
+    """Return True if at least one known provider key is in the environment."""
+    return any(os.environ.get(name) for name in _PROVIDER_ENV_VARS)
+
+
+def _should_activate() -> bool:
+    """Resolve the autopatch decision per the documented order above.
+
+    Inlined here (not imported from loupe.integrations.httpx) so the
+    .pth hot path never imports the integrations subpackage when the
+    answer is "off".
+    """
+    raw = os.environ.get("LOUPE_AUTOPATCH")
+    if raw is not None:
+        norm = raw.strip().lower()
+        if norm in ("1", "true", "yes", "on"):
+            return True
+        if norm in ("0", "false", "no", "off", ""):
+            return False
+        return False
+    # Env var unset → activate if EITHER (a) the user ran `loupe setup`
+    # OR (b) a recognized provider key is present in the environment.
+    try:
+        from pathlib import Path
+        home = os.environ.get("LOUPE_HOME")
+        root = Path(home) if home else Path.home() / ".loupe"
+        if (root / "config.toml").exists():
+            return True
+    except Exception:  # noqa: BLE001 — never break Python startup
+        # Fall through to env-var detection
+        pass
+    return _any_provider_env_var_set()
 
 
 def _activate() -> None:
@@ -39,6 +96,5 @@ def _activate() -> None:
         return
 
 
-# Fast path: env var unset → ~1µs cost, no imports, no side effects.
-if os.environ.get("LOUPE_AUTOPATCH") in ("1", "true", "yes", "on"):
+if _should_activate():
     _activate()

@@ -40,6 +40,13 @@ from loupe.attribution import (
     attribute_trace,
     make_attributor,
 )
+from loupe.attribution_patching import (
+    AttributionPatcher,
+    CausalFeature,
+    PatchPair,
+    PatchResult,
+)
+from loupe.steering import Steerer, SteerResult, SteerSpec
 from loupe.store import Store
 from loupe.trace import Step, Trace, current_trace, record_step, trace
 
@@ -52,7 +59,7 @@ __all__ = [
     "current_trace",
     "record_step",
     "trace",
-    # Circuit attribution
+    # Circuit attribution (correlational)
     "AttributionResult",
     "Attributor",
     "FeatureActivation",
@@ -60,4 +67,13 @@ __all__ = [
     "SAEAttributor",
     "attribute_trace",
     "make_attributor",
+    # Attribution patching (causal)
+    "AttributionPatcher",
+    "CausalFeature",
+    "PatchPair",
+    "PatchResult",
+    # Steering (causal manipulation)
+    "Steerer",
+    "SteerResult",
+    "SteerSpec",
 ]

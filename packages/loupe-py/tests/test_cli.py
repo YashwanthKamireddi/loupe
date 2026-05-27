@@ -130,6 +130,50 @@ def test_show_known_trace(runner: CliRunner, loupe_home: Path) -> None:
     assert "boom" in result.output
 
 
+def test_show_displays_llm_reply_content(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """`loupe show` must surface the actual model reply, not just step
+    names — the captured content IS the forensic payload. The seed's
+    llm-call has outputs {"text": "hi"}."""
+    trace_id = _seed_one_trace(loupe_home)
+    result = runner.invoke(app, ["show", trace_id[:12]])
+    assert result.exit_code == 0
+    assert "reply" in result.output
+    assert "hi" in result.output
+
+
+def test_show_displays_prompt_content(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """A captured prompt (messages / contents / prompt) renders inline."""
+    from loupe import record_step, trace
+    from loupe.store import JSONLStore
+
+    traces_dir = loupe_home / "traces"
+    traces_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.stem for p in traces_dir.glob("*.jsonl")}
+    store = JSONLStore(root=traces_dir)
+
+    @trace(name="prompt-agent", framework="test", store=store)
+    def agent() -> None:
+        record_step(
+            "llm-call", "gemini:gemini-2.5-flash",
+            inputs={"messages": [{"role": "user", "content": "what is observability?"}]},
+            outputs={"text": "Seeing what your system does.",
+                     "input_tokens": 5, "output_tokens": 6},
+        )
+
+    agent()
+    tid = next(iter({p.stem for p in traces_dir.glob("*.jsonl")} - before))
+    result = runner.invoke(app, ["show", tid[:12]])
+    assert result.exit_code == 0
+    assert "prompt" in result.output
+    assert "what is observability?" in result.output
+    assert "Seeing what your system does." in result.output
+    assert "tokens" in result.output  # token summary line
+
+
 def test_show_unknown_trace_exits_nonzero(runner: CliRunner, loupe_home: Path) -> None:
     result = runner.invoke(app, ["show", "deadbeef"])
     assert result.exit_code == 1
@@ -952,17 +996,8 @@ def test_explain_unknown_topic_suggests_close_match(
 
 
 # ---------------------------------------------------------------------------
-# loupe try / ask / chat / run — Phase 2 zero-code paths
+# loupe ask / chat / run — Phase 2 zero-code paths
 # ---------------------------------------------------------------------------
-
-
-def test_try_without_config_exits_with_hint(
-    runner: CliRunner, loupe_home: Path,
-) -> None:
-    res = runner.invoke(app, ["try"])
-    assert res.exit_code == 1
-    assert "no provider configured" in res.output
-    assert "loupe setup" in res.output
 
 
 def test_ask_without_config_exits_with_hint(
@@ -998,11 +1033,12 @@ def test_ask_uses_configured_provider(
     from loupe import cli as cli_mod
     calls: list[tuple] = []
 
-    def fake_invoke(provider, api_key, model, prompt):  # type: ignore[no-untyped-def]
+    def fake_invoke(provider, api_key, model, history):  # type: ignore[no-untyped-def]
+        prompt = history[-1]["content"] if history else ""
         calls.append((provider, model, prompt))
         return f"reply to: {prompt}"
 
-    monkeypatch.setattr(cli_mod, "_invoke_provider", fake_invoke)
+    monkeypatch.setattr(cli_mod, "_invoke_with_history", fake_invoke)
 
     res = runner.invoke(app, ["ask", "what", "is", "loupe"])
     assert res.exit_code == 0, res.output
@@ -1179,3 +1215,328 @@ def test_parse_duration_rejects_garbage() -> None:
         except ValueError:
             continue
         raise AssertionError(f"_parse_duration({bad!r}) should have raised")
+
+
+# ---------------------------------------------------------------------------
+# Consolidation regression tests — v0.0.57 polish
+# ---------------------------------------------------------------------------
+
+
+def test_setup_picker_supports_all_six_providers() -> None:
+    """The setup-provider registry must list the six providers the wizard
+    advertises. Adding/removing one here is the canonical way to extend
+    coverage — every other CLI surface flows from this list."""
+    from loupe._setup_providers import SETUP_PROVIDERS, labels
+
+    expected = {"gemini", "anthropic", "openai", "mistral", "groq", "deepseek"}
+    assert {p.label for p in SETUP_PROVIDERS} == expected
+    # Picker order — frontier first, then inference. Gemini stays at #1
+    # because it has the free tier and is the fastest path to a trace.
+    assert labels()[0] == "gemini"
+
+
+def test_setup_registry_has_required_fields_for_every_provider() -> None:
+    """Each entry must carry the fields the wizard needs end-to-end."""
+    from loupe._setup_providers import SETUP_PROVIDERS
+
+    for p in SETUP_PROVIDERS:
+        assert p.label
+        assert p.display
+        assert p.tagline
+        assert p.env_keys
+        assert p.key_url.startswith("https://")
+        assert p.key_prefix
+        assert p.default_model
+
+
+def test_setup_scripted_supports_mistral_groq_deepseek(
+    runner: CliRunner, loupe_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding 3 new providers must work end-to-end via the scripted path."""
+    from loupe import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_ping_provider",
+                        lambda *a, **kw: (False, "test mode"))
+
+    for provider, fake_key in [
+        ("mistral",  "sk-test-mistral"),
+        ("groq",     "gsk_test-groq"),
+        ("deepseek", "sk-test-deepseek"),
+    ]:
+        # Reset config between providers so each save is observed in isolation.
+        cfg_path = loupe_home / "config.toml"
+        if cfg_path.exists():
+            cfg_path.unlink()
+        res = runner.invoke(app, [
+            "setup",
+            "--provider", provider,
+            "--api-key", fake_key,
+            "--no-browser",
+        ])
+        assert res.exit_code == 0, f"{provider}: {res.output}"
+
+        from loupe.config import Config
+        cfg = Config.load()
+        assert cfg.providers[provider].api_key == fake_key
+        assert cfg.default_provider == provider
+
+
+def test_export_default_format_is_loupebench(
+    runner: CliRunner, loupe_home: Path, tmp_path: Path,
+) -> None:
+    """`loupe export` (no --format) must keep producing LoupeBench JSONL —
+    we didn't change the historical default."""
+    _seed_one_trace(loupe_home)
+    res = runner.invoke(app, ["export", "--out", str(tmp_path / "x.jsonl")])
+    # No tagged failures, but the command must succeed cleanly + hint at tagging.
+    assert res.exit_code == 0
+    assert "Nothing to export" in res.output
+
+
+def test_export_otlp_writes_otel_document(
+    runner: CliRunner, loupe_home: Path, tmp_path: Path,
+) -> None:
+    """`loupe export --format otlp` must write a valid OTLP document."""
+    import json
+
+    _seed_one_trace(loupe_home)
+    out = tmp_path / "otel.json"
+    res = runner.invoke(app, [
+        "export", "--format", "otlp", "--out", str(out),
+    ])
+    assert res.exit_code == 0, res.output
+    assert out.exists()
+
+    doc = json.loads(out.read_text())
+    assert "resourceSpans" in doc
+    assert len(doc["resourceSpans"]) >= 1
+
+
+def test_export_rejects_unknown_format(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["export", "--format", "csv"])
+    assert res.exit_code == 1
+    assert "unknown --format" in res.output
+
+
+def test_export_accepts_jsonl_alias(
+    runner: CliRunner, loupe_home: Path, tmp_path: Path,
+) -> None:
+    """`--format jsonl` is an alias for `loupebench` — the help text
+    calls it "JSONL (LoupeBench)", so a user typing jsonl must not hit
+    the unknown-format error."""
+    out = tmp_path / "bench.jsonl"
+    res = runner.invoke(app, ["export", "--format", "jsonl", "--out", str(out)])
+    assert res.exit_code == 0, res.output
+    assert "unknown --format" not in res.output
+
+
+def test_start_command_is_gone(runner: CliRunner, loupe_home: Path) -> None:
+    """`loupe start` was merged into `loupe ui` — typing it must surface
+    the did-you-mean shim instead of silently working."""
+    from loupe.cli import _registered_command_names
+    assert "start" not in _registered_command_names()
+    assert "ui" in _registered_command_names()
+
+
+def test_try_command_is_gone(runner: CliRunner, loupe_home: Path) -> None:
+    """`loupe try` was cut — `loupe ask 'hi'` covers it. Confirm it no
+    longer appears in the registered command list."""
+    from loupe.cli import _registered_command_names
+    assert "try" not in _registered_command_names()
+
+
+def test_otlp_command_is_gone(runner: CliRunner, loupe_home: Path) -> None:
+    """`loupe otlp` was merged into `loupe export --format otlp`."""
+    from loupe.cli import _registered_command_names
+    assert "otlp" not in _registered_command_names()
+    assert "export" in _registered_command_names()
+
+
+# ---------------------------------------------------------------------------
+# v0.0.59 — universal `loupe run` + autopatch on-by-default
+# ---------------------------------------------------------------------------
+
+
+def test_run_python_script_still_works(
+    runner: CliRunner, loupe_home: Path, tmp_path: Path,
+) -> None:
+    """`loupe run my_agent.py` continues to execute in-process for the
+    deepest capture (parent @trace + nested steps)."""
+    script = tmp_path / "ok.py"
+    script.write_text("print('hello from run')\n", encoding="utf-8")
+    res = runner.invoke(app, ["run", str(script)])
+    assert res.exit_code == 0, res.output
+    assert "trace captured" in res.output
+
+
+def test_run_unknown_command_exits_127(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """If the binary isn't on PATH, exit 127 (standard shell convention)
+    with a friendly hint about `loupe proxy`."""
+    res = runner.invoke(app, ["run", "nonexistent-command-xyz"])
+    assert res.exit_code == 127
+    assert "not found on PATH" in res.output
+    assert "loupe proxy" in res.output
+
+
+def test_run_subprocess_propagates_exit_code(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    """A subprocess that exits 42 must surface as exit 42 from `loupe run`."""
+    res = runner.invoke(app, ["run", "sh", "-c", "exit 42"])
+    assert res.exit_code == 42
+
+
+def test_run_double_dash_separator_is_stripped(
+    runner: CliRunner, loupe_home: Path, tmp_path: Path,
+) -> None:
+    """`loupe run -- python --version` should run `python --version`, not
+    look for a file named `--`."""
+    res = runner.invoke(app, ["run", "--", "sh", "-c", "echo ok"])
+    assert res.exit_code == 0
+    assert "ok" in res.output
+
+
+def test_setup_reset_deletes_config_file(
+    runner: CliRunner, loupe_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`loupe setup --reset --provider X --api-key K --no-browser` should:
+       1. Delete the existing config.toml first
+       2. Then run the wizard to write a new one
+    """
+    # Suppress the network ping so the test is deterministic.
+    from loupe import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_ping_provider",
+                        lambda *a, **kw: (False, "test mode"))
+
+    # Seed an existing config with one provider.
+    r1 = runner.invoke(app, [
+        "setup", "--provider", "openai", "--api-key", "sk-old", "--no-browser",
+    ])
+    assert r1.exit_code == 0
+    cfg_path = loupe_home / "config.toml"
+    assert cfg_path.exists()
+    assert "sk-old" in cfg_path.read_text()
+
+    # Reset + reconfigure to a different provider in one command.
+    r2 = runner.invoke(app, [
+        "setup", "--reset",
+        "--provider", "gemini", "--api-key", "AIza-new", "--no-browser",
+    ])
+    assert r2.exit_code == 0, r2.output
+    assert "deleted" in r2.output
+    text = cfg_path.read_text()
+    assert "sk-old" not in text       # old provider gone
+    assert "AIza-new" in text         # new provider saved
+
+
+def test_setup_reset_with_no_existing_config_is_noop_then_runs_wizard(
+    runner: CliRunner, loupe_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`loupe setup --reset` on a fresh install must not error — it just
+    falls through to the normal wizard run."""
+    from loupe import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_ping_provider",
+                        lambda *a, **kw: (False, "test mode"))
+
+    res = runner.invoke(app, [
+        "setup", "--reset",
+        "--provider", "gemini", "--api-key", "AIza-fresh", "--no-browser",
+    ])
+    assert res.exit_code == 0, res.output
+    assert "no config to reset" in res.output
+    assert (loupe_home / "config.toml").exists()
+
+
+def test_setup_remove_drops_single_provider(
+    runner: CliRunner, loupe_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`loupe setup --remove gemini` should keep openai + delete gemini."""
+    from loupe import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_ping_provider",
+                        lambda *a, **kw: (False, "test mode"))
+
+    # Configure two providers.
+    for prov, key in [("gemini", "AIza-key"), ("openai", "sk-key")]:
+        res = runner.invoke(app, [
+            "setup", "--provider", prov, "--api-key", key, "--no-browser",
+        ])
+        assert res.exit_code == 0
+
+    # Remove just gemini.
+    res = runner.invoke(app, ["setup", "--remove", "gemini"])
+    assert res.exit_code == 0, res.output
+    assert "removed gemini" in res.output
+
+    from loupe.config import Config
+    cfg = Config.load()
+    assert "gemini" not in cfg.providers or cfg.providers["gemini"].api_key is None
+    assert cfg.providers["openai"].api_key == "sk-key"
+
+
+def test_setup_remove_default_provider_falls_back_to_remaining(
+    runner: CliRunner, loupe_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the *default* provider must promote one of the remaining
+    providers — otherwise the user's next `loupe ask` would break."""
+    from loupe import cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_ping_provider",
+                        lambda *a, **kw: (False, "test mode"))
+
+    runner.invoke(app, ["setup", "--provider", "gemini",
+                        "--api-key", "AIza", "--no-browser"])
+    runner.invoke(app, ["setup", "--provider", "openai",
+                        "--api-key", "sk", "--no-browser"])
+    from loupe.config import Config
+    assert Config.load().default_provider == "openai"  # set most recently
+
+    res = runner.invoke(app, ["setup", "--remove", "openai"])
+    assert res.exit_code == 0
+    cfg = Config.load()
+    assert "openai" not in cfg.providers or cfg.providers["openai"].api_key is None
+    # default must have moved off the now-deleted provider
+    assert cfg.default_provider != "openai"
+    assert cfg.api_key_for(cfg.default_provider) is not None
+
+
+def test_setup_remove_unknown_provider_exits_1(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["setup", "--remove", "made-up-llm"])
+    assert res.exit_code == 1
+    assert "unknown provider" in res.output
+
+
+def test_setup_remove_noop_when_provider_isnt_configured(
+    runner: CliRunner, loupe_home: Path,
+) -> None:
+    res = runner.invoke(app, ["setup", "--remove", "gemini"])
+    assert res.exit_code == 0
+    assert "isn't configured" in res.output
+
+
+def test_autopatch_resolver_documents_three_modes() -> None:
+    """The _autopatch_enabled() function must enforce the documented
+    resolution: env-var > config-toml existence > off."""
+    import os as _os
+
+    from loupe.integrations.httpx import _autopatch_enabled
+
+    saved = _os.environ.pop("LOUPE_AUTOPATCH", None)
+    try:
+        # Explicit on
+        _os.environ["LOUPE_AUTOPATCH"] = "1"
+        assert _autopatch_enabled() is True
+        # Explicit off
+        _os.environ["LOUPE_AUTOPATCH"] = "0"
+        assert _autopatch_enabled() is False
+        # Unknown value → off (safer default)
+        _os.environ["LOUPE_AUTOPATCH"] = "maybe"
+        assert _autopatch_enabled() is False
+    finally:
+        if saved is None:
+            _os.environ.pop("LOUPE_AUTOPATCH", None)
+        else:
+            _os.environ["LOUPE_AUTOPATCH"] = saved

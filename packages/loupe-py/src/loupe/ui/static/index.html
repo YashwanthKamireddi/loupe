@@ -36,15 +36,18 @@
         <button type="button" class="filter-chip" data-filter="failed">Failed</button>
         <button type="button" class="filter-chip" data-filter="tagged">Tagged</button>
       </div>
-      <ul class="trace-list" id="trace-list"></ul>
-      <div class="sidebar-foot">
-        <button type="button" class="btn-ghost" id="help-button" title="Keyboard shortcuts (?)">
-          <span>?</span> Shortcuts
-        </button>
-        <button type="button" class="btn-ghost" id="tour-button" title="Replay the welcome tour">
-          <span>◉</span> Tour
-        </button>
+      <!-- 14-day spend + activity sparkline. Hidden until the first
+           datapoint with a known model lands. -->
+      <div class="cost-sparkline" id="cost-sparkline" hidden>
+        <div class="cost-sparkline-header">
+          <span class="cost-sparkline-label">14d spend</span>
+          <span class="cost-sparkline-total" id="cost-sparkline-total"></span>
+        </div>
+        <svg class="cost-sparkline-svg" id="cost-sparkline-svg"
+             viewBox="0 0 240 36" preserveAspectRatio="none"
+             role="img" aria-label="14-day LLM spend"></svg>
       </div>
+      <ul class="trace-list" id="trace-list"></ul>
     </aside>
 
     <section class="viewer" id="viewer">
@@ -53,7 +56,20 @@
         <h1 class="empty-title">Inspect agent runs.</h1>
         <p class="empty-sub" id="empty-state-sub">Select a case file from the left.</p>
         <div class="empty-onboard" id="empty-onboard" hidden>
-          <p class="empty-onboard-lede">Get a real captured agent run in front of you in 60 seconds:</p>
+          <div class="empty-concept">
+            <p class="empty-concept-title">What you'll see here</p>
+            <p class="empty-concept-body">
+              Every LLM call your code makes becomes a <strong>trace</strong>
+              — the top-to-bottom story of one agent run. Inside it, each
+              model call, tool call, or checkpoint you wrote in your
+              code is a <strong>step</strong>. Click a step to see its
+              <strong>evidence</strong>: what the model saw, what it
+              returned, latency, tokens, errors. Mark any failing
+              step as an <strong>annotation</strong> to build your
+              regression set.
+            </p>
+          </div>
+          <p class="empty-onboard-lede">60 seconds to your first trace:</p>
           <ol class="empty-steps">
             <li>
               <span class="empty-step-n">1</span>
@@ -65,8 +81,8 @@
             <li>
               <span class="empty-step-n">2</span>
               <span class="empty-step-body">
-                Set a free Gemini key (one time, persists in fish)
-                <code class="empty-cmd" data-copy="set -Ux GEMINI_API_KEY YOUR_KEY">set -Ux GEMINI_API_KEY YOUR_KEY</code>
+                Set a provider key (Gemini is free — any of the six work)
+                <code class="empty-cmd" id="empty-env-cmd" data-copy="export GEMINI_API_KEY=YOUR_KEY">export GEMINI_API_KEY=YOUR_KEY</code>
               </span>
             </li>
             <li>
@@ -79,48 +95,25 @@
           </ol>
           <p class="empty-foot">
             New traces appear here automatically — no refresh needed.
-            Press <kbd>?</kbd> for keyboard shortcuts.
           </p>
+        </div>
+        <!-- One-shot label that appears on the user's FIRST captured
+             trace (gated by localStorage["loupe.first_trace_seen"]).
+             Teaches the trace-detail layout in one sentence, then
+             dismisses on click or after 10s. -->
+        <div class="first-trace-hint" id="first-trace-hint" hidden>
+          <span class="first-trace-mark">◉</span>
+          <span class="first-trace-text">
+            This is the timeline of one agent run. Each row below is a
+            <strong>step</strong> — an LLM call, a tool call, or a
+            checkpoint you wrote in your code. Click any step to see
+            its evidence (inputs, outputs, HTTP call).
+          </span>
+          <button class="first-trace-close" id="first-trace-close" aria-label="Dismiss">×</button>
         </div>
       </div>
     </section>
   </main>
-
-  <!-- Guided first-visit tour. Shown automatically once per browser
-       (gated by localStorage["loupe.tour.seen"]) and any time the user
-       clicks the "Tour" button in the sidebar footer. -->
-  <div class="tour-backdrop" id="tour" hidden aria-hidden="true">
-    <div class="tour-spot" id="tour-spot"></div>
-    <div class="tour-card" role="dialog" aria-labelledby="tour-title" aria-modal="true">
-      <div class="tour-progress" id="tour-progress"></div>
-      <h2 class="tour-title" id="tour-title"></h2>
-      <p class="tour-body" id="tour-body"></p>
-      <div class="tour-actions">
-        <button type="button" class="btn-ghost" id="tour-skip">Skip</button>
-        <span class="tour-step-label" id="tour-step-label"></span>
-        <button type="button" class="btn-ghost" id="tour-back" hidden>Back</button>
-        <button type="button" class="btn-primary" id="tour-next">Next</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" id="help-modal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
-      <div class="modal-head">
-        <h2 id="help-title">Keyboard shortcuts</h2>
-        <button type="button" class="btn-ghost" data-close-modal aria-label="Close (Esc)">Esc</button>
-      </div>
-      <table class="kbd-table">
-        <tr><td><kbd>↓</kbd> / <kbd>↑</kbd></td><td>Next / previous step</td></tr>
-        <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Vim-style step navigation</td></tr>
-        <tr><td><kbd>t</kbd></td><td>Tag the selected step</td></tr>
-        <tr><td><kbd>e</kbd></td><td>Export current trace as markdown</td></tr>
-        <tr><td><kbd>/</kbd></td><td>Focus the case-file search</td></tr>
-        <tr><td><kbd>?</kbd></td><td>Show this dialog</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>Close any open dialog</td></tr>
-      </table>
-    </div>
-  </div>
 
   <template id="trace-view-tmpl">
     <div class="trace-view">

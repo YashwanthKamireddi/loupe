@@ -50,6 +50,56 @@ _REDACTED = "[redacted]"
 _MAX_DEPTH = 8
 
 
+# J2 — User-defined regex patterns from ``~/.loupe/config.toml``.
+# Loaded lazily on the first redact() call so importing this module stays
+# free of side effects + dependency-cheap.
+_CUSTOM_PATTERNS_CACHE: list[re.Pattern[str]] | None = None
+_CUSTOM_PATTERNS_LOADED_FOR_CONFIG: str | None = None
+
+
+def _load_custom_patterns() -> list[re.Pattern[str]]:
+    """Return the cached compiled list of user-defined redaction patterns.
+
+    Re-reads the config file when its path or modification token changes
+    (cheap: compares the path string only). Compile failures are logged
+    once via warnings and the bad pattern is skipped — never raise into
+    the capture path.
+    """
+    global _CUSTOM_PATTERNS_CACHE, _CUSTOM_PATTERNS_LOADED_FOR_CONFIG
+    try:
+        from loupe.config import Config, config_path
+    except Exception:  # noqa: BLE001 — config import must never break redact
+        return []
+    cfg_token = str(config_path()) if hasattr(Config, "load") else ""
+    if (
+        _CUSTOM_PATTERNS_CACHE is not None
+        and cfg_token == _CUSTOM_PATTERNS_LOADED_FOR_CONFIG
+    ):
+        return _CUSTOM_PATTERNS_CACHE
+    compiled: list[re.Pattern[str]] = []
+    try:
+        cfg = Config.load()
+        for raw in cfg.redact_patterns:
+            try:
+                compiled.append(re.compile(raw))
+            except re.error:
+                # Bad regex — skip; the doctor command (`loupe doctor`)
+                # can validate user config separately.
+                continue
+    except Exception:  # noqa: BLE001
+        compiled = []
+    _CUSTOM_PATTERNS_CACHE = compiled
+    _CUSTOM_PATTERNS_LOADED_FOR_CONFIG = cfg_token
+    return compiled
+
+
+def _reset_custom_pattern_cache() -> None:
+    """For tests: force the next ``redact()`` call to re-read config."""
+    global _CUSTOM_PATTERNS_CACHE, _CUSTOM_PATTERNS_LOADED_FOR_CONFIG
+    _CUSTOM_PATTERNS_CACHE = None
+    _CUSTOM_PATTERNS_LOADED_FOR_CONFIG = None
+
+
 def redact(value: Any) -> Any:
     """Return a deeply-redacted copy of `value`.
 
@@ -85,8 +135,14 @@ def _redact(value: Any, *, depth: int) -> Any:
 
 
 def _redact_string(s: str) -> str:
-    """Replace credential-shaped substrings with [redacted]."""
+    """Replace credential-shaped substrings with [redacted].
+
+    Applies the built-in patterns first, then any user-configured
+    regexes from ``~/.loupe/config.toml`` ``[redact] patterns``.
+    """
     redacted = s
     for pattern in _SECRET_VALUE_PATTERNS:
+        redacted = pattern.sub(_REDACTED, redacted)
+    for pattern in _load_custom_patterns():
         redacted = pattern.sub(_REDACTED, redacted)
     return redacted

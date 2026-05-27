@@ -6,6 +6,1216 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 
 ### Planned for 0.1.0
 - Cluster analysis across larger annotated corpora (hierarchical, not just frequency)
+- Phase C: multi-trace bulk operations in the dashboard
+- Phase D: time-series cost + activity view in the dashboard
+
+## [0.0.72] — 2026-05-21  ·  **Capture the error body, not just the code**
+
+Found by testing Loupe on a real third-party project (a Gemini /
+google-genai FastAPI agent) with no code changes — the universal
+httpx interceptor captured the call correctly, proving Loupe works on
+any project, any provider, zero instrumentation. But the capture had a
+real gap: a failed LLM call (4xx/5xx) recorded only `{"status": 400}`
+and **threw away the provider's error message** — exactly the "it just
+shows the error code" problem. Now a failed call captures the error
+body (`"API key not valid"`, `"rate limit exceeded"`, `"context length
+exceeded"`, …) into `outputs.error` AND the step's `error` field, so
+`loupe show` and the dashboard lead with the actual cause:
+
+```
+  2.   llm-call  gemini:gemini-2.5-flash
+        HTTP 400: API key not valid. Please pass a valid API key.
+```
+
+New `_extract_error_message` helper handles the OpenAI / Gemini /
+Anthropic error envelopes (all nest under `error.message`) with a
+stringified-body fallback so nothing is ever lost. Regression test
+mirrors the exact real-world Gemini 400.
+
+Same root cause for successful calls: `loupe show` listed step NAMES
+but hid the prompt + reply — the actual forensic payload. Now every
+llm-call step prints the prompt the model saw and the reply it gave
+(handles OpenAI/Anthropic `messages`, Gemini `contents`, and plain
+`prompt`/`text` shapes), plus a compact `↳ in N · out M tokens` line.
+The dashboard already showed conversation bubbles; the CLI now matches.
+546 tests pass.
+
+---
+
+## [0.0.71] — 2026-05-21  ·  **`loupe onboard` — first run on your real project**
+
+New `loupe onboard` command (and auto-trigger the first time you type
+bare `loupe` inside a project folder). It's a real action flow, not a
+text tour: (1) ensures a provider key is set, (2) scans the current
+folder for your actual agent script — ranked by LLM-SDK imports,
+entry-point name, and a `__main__` block — (3) shows what it found and,
+with your confirmation, runs it under capture to produce a **real
+trace from your own code**, (4) offers to open the dashboard on that
+run. Empty folder falls back to scaffolding a sample. Never executes
+anything without an explicit yes, and a non-interactive invocation
+runs nothing — it just prints the outline. Detection logic lives in a
+new testable `loupe._onboard` module (`detect_agent_scripts`,
+`looks_like_project`) with 10 unit tests. 543 tests pass.
+
+---
+
+## [0.0.70] — 2026-05-21  ·  **Dashboard bug fixes**
+
+Three real dashboard bugs from a user screenshot:
+
+- **Dead "tour" button removed.** The tour JS/CSS was deleted in
+  v0.0.68 but the trigger link survived in the sidebar header —
+  clicking it did nothing. Gone now.
+- **Cost sparkline ("14d spend") fixed.** It rendered as a broken
+  near-white block because the bars used `fill="var(--ink)"` as an
+  SVG *attribute*, and `var()` doesn't resolve in presentation
+  attributes. Moved fills to CSS classes (`.spark-bar` amber,
+  `.spark-bar-rl` red, `.spark-bar-empty` dim) where `var()` works.
+- **Mobile overflow ("scrubbed and overflown").** Added a global
+  `overflow-x: hidden` + `max-width: 100vw` guard, made the topbar
+  stats/meta pills wrap, let the layout stack-and-scroll vertically
+  on phones instead of trapping content in fixed-height panes, and
+  made the timeline strip scroll horizontally inside itself. Also
+  removed dead `.view-switcher` / `.theme-picker` media-query rules
+  left over from the v0.0.64 gimmick strip.
+
+533 tests pass.
+
+---
+
+## [0.0.69] — 2026-05-21  ·  **One reader, everywhere**
+
+Architecture-only refactor, no behavior change. Finished the JSONL
+reader consolidation started in v0.0.68: every trace-file read across
+`report.py`, `report_html.py`, `attribution.py`, `bench.py`,
+`otlp.py`, `_parquet.py`, `ui/server.py`, and ~8 call sites in
+`cli.py` now routes through the canonical `iter_jsonl_records` /
+`read_trace_header` / `load_trace_split` helpers in `loupe.store`.
+Inline `json.loads(line)` loops dropped from ~22 to 6, and those 6
+are intentional (the index's own builder, the LoupeBench corpus
+loader, the proxy's SSE-stream parser, and `verify`'s raw schema
+validator which must see unparsed bytes). cli.py module split still
+deferred.
+
+Also ran a full command-by-command functional sweep against a real
+trace store — every `loupe` command works end-to-end. Fixed the one
+break found: `loupe export --format jsonl` was rejected even though
+`--help` advertises "JSONL (LoupeBench)"; `jsonl` is now an accepted
+alias for `loupebench`. 533 tests pass.
+
+---
+
+## [0.0.68] — 2026-05-21  ·  **Kill the bugs, kill the bloat**
+
+Bug + dead-code purge based on user-reported issues, no new commands
+or docs. Removed ~250 lines of zombie tour overlay (JS + CSS + HTML)
+that was still autolaunching on every first dashboard visit despite
+being supposedly cut in v0.0.64. Removed the localhost-only "Share"
+button on the step-detail panel — it generated `http://localhost:7860/#…`
+URLs that were useless to share with anyone. Fixed two bugs in the
+v0.0.67 first-trace inline hint: it re-appeared on every SSE refresh
+(now latched once per session), and its 10-second auto-dismiss timer
+leaked when `updateEmptyState()` fired repeatedly (now cleared before
+re-arm). Started the architecture pass: added `iter_jsonl_records`,
+`read_trace_header`, and `load_trace_split` to `loupe.store` as the
+canonical readers; collapsed `_read_header` in both `cli.py` and
+`ui/server.py` plus `_load_trace` / `_load_trace_with_warning` into
+shims over the new store helpers. cli.py module split deferred to
+v0.0.69. Same 532 tests pass.
+
+---
+
+## [0.0.67] — 2026-05-21  ·  **"Master Loupe in 60 seconds"**
+
+The bar this release ships against: a naive vibe coder who has never
+seen Loupe can `pip install loupe`, type `loupe`, and within 60
+seconds say "oh — I get it. This is for debugging my agent."
+Frictionless was necessary but not sufficient. The product itself
+has to teach.
+
+### The CLI welcome screen now PITCHES + TEACHES
+
+`loupe` (no args) used to print a minimal banner + a few commands.
+It now opens with a four-line pitch that defines what Loupe does and
+what it'll capture, in plain English a vibe coder can quote back:
+
+```
+  A magnifying glass for your AI agent.
+
+  Loupe captures every LLM call your code makes — model,
+  prompt, response, latency, tokens, errors — so when your
+  agent acts weird, you can replay the exact failure and
+  find the cause.
+```
+
+If a provider env var is already set, a green
+`✓ Detected your OPENAI_API_KEY — Loupe will capture every OpenAI
+call.` line replaces the implicit "do I need to do something?"
+question.
+
+Below the pitch, exactly one CTA: `loupe init my-agent`. Then a
+single help link: `loupe explain loupe`.
+
+### `loupe explain loupe` — the "what IS this?" topic
+
+New topic that defines every piece of Loupe vocabulary inline
+(`trace`, `step`, `evidence`, `annotation`, `capture`, `autopatch`),
+then walks through the three commands that cover 90% of usage. It's
+the answer for a vibe coder who's confused — typing `loupe explain
+loupe` is faster than reading a docs site.
+
+### Dashboard empty-state now teaches the model
+
+The dashboard's first-run empty-state used to be 3 quickstart
+commands. Now it opens with a "What you'll see here" block that
+defines `trace`, `step`, `evidence`, and `annotation` BEFORE the
+quickstart, so a user arriving at the dashboard before they've
+captured anything still walks away understanding the model.
+
+### First-trace one-shot teaching hint
+
+The user's very FIRST captured trace shows a small amber-bordered
+inline label above the trace-detail pane:
+
+> ◉ This is the timeline of one agent run. Each row below is a
+> **step** — an LLM call, a tool call, or a checkpoint you wrote
+> in your code. Click any step to see its evidence (inputs,
+> outputs, HTTP call).
+
+Self-dismisses after 10 s of dwell time or on `×` click. Persists
+the dismissal in `localStorage["loupe.first_trace_seen"]` so a
+returning user never sees it again. This is **not** a multi-step
+tour (which the user rejected in v0.0.64); it's one inline label,
+on the one moment it matters most.
+
+### Trace-detail panel jargon defused
+
+The `inputs (raw JSON)` / `outputs (raw JSON)` / `metadata` summary
+labels now have `title=` hover-explainers:
+
+- `inputs` — "The data your code passed to the model — prompts,
+  messages, tool arguments, model name."
+- `outputs` — "What the model returned, plus token counts and any
+  tool-call requests."
+- `metadata` — "Loupe-added context: latency, HTTP status,
+  framework, rate-limit signals."
+
+Screenreader-accessible out of the box (no JS, no new DOM, just
+`title` attributes).
+
+### Bulletproof JSONL reads
+
+`loupe.store.safe_load_jsonl(path)` is the new tolerant reader.
+Skips any line that doesn't parse and returns
+`(records, skipped_line_count)`. Used by `_load_trace_with_warning`
+and `loupe show`, so a SIGKILL'd writer, flaky disk, or
+hand-edited JSONL no longer crashes the CLI — instead, callers
+print a one-liner:
+
+```
+  ⚠ skipped 1 corrupt line(s) in abc12345... Run `loupe doctor --fix`
+    to quarantine.
+```
+
+### `loupe doctor --fix` — safe + reversible self-heal
+
+New `--fix` flag turns `doctor` into a one-command repair tool:
+
+| Diagnostic                  | Repair                                  |
+|-----------------------------|------------------------------------------|
+| traces dir missing          | `mkdir -p ~/.loupe/traces`              |
+| annotations dir missing     | `mkdir -p ~/.loupe/annotations`         |
+| Corrupt JSONL               | `mv → ~/.loupe/quarantine/` (never rm)  |
+| Orphan annotation sidecar   | `rm` (parent trace is already gone)     |
+| DuckDB index drift          | rebuild via `JSONLIndex.rebuild()`      |
+
+Quarantine name collisions get a `.1`, `.2`, … suffix — no file is
+ever silently overwritten. After repair, doctor re-runs its full
+diagnostic so the user sees a clean install in the same invocation.
+
+### `loupe ui` auto-open is smarter
+
+The existing `--no-browser` flag is unchanged; the auto-open path
+now consults a new `_should_open_browser()` helper that blocks the
+browser launch in:
+
+- Non-TTY (CI, piped, captured by tests)
+- Linux/BSD with no `DISPLAY` AND no `WAYLAND_DISPLAY` (headless SSH)
+- `LOUPE_DISABLE_BROWSER=1` (escape hatch)
+
+macOS and Windows are unconditionally allowed since `open` / `start`
+handle the launch fine without an X display.
+
+### New tests (4 files)
+
+- `tests/test_welcome_naive_user.py` — pins the pitch contract
+  (magnifying glass line, capture promise, CTA, env-var detection).
+- `tests/test_corrupt_jsonl_tolerance.py` — `safe_load_jsonl` skips
+  bad lines; `loupe show` / `loupe list` survive corrupt files
+  with exit code 0 and a ⚠ warning.
+- `tests/test_doctor_fix.py` — creates missing dirs, quarantines
+  corrupt JSONL, removes orphan annotations, idempotent on clean
+  install, suffix-collision safe.
+- `tests/test_ui_browser_open.py` — TTY+DISPLAY opens; non-TTY
+  blocks; headless Linux blocks; macOS/Windows always allowed;
+  `LOUPE_DISABLE_BROWSER` overrides every signal.
+
+---
+
+## [0.0.66] — 2026-05-21  ·  **"Just works" — frictionless from `pip install` to first trace**
+
+The shortest path from zero to a captured agent run drops to two lines:
+
+```
+pip install loupe
+OPENAI_API_KEY=sk-… python my_agent.py
+```
+
+No `loupe[ui]` extra. No `loupe setup` ceremony. No `LOUPE_AUTOPATCH=1`.
+The dashboard, the universal HTTP proxy, and zero-code capture all
+work out of the box, and autopatch turns on the moment any recognized
+provider env var is present.
+
+### Frictionless install — three extras promoted to required
+
+`pip install loupe` now bundles `httpx>=0.27`, `fastapi>=0.110`, and
+`uvicorn>=0.30` directly. The `loupe[ui]` and `loupe[universal]`
+extras are gone — they were friction with no benefit, since literally
+every Loupe install was running them anyway. Total install size grows
+by ~25 MB but every command works out of the box.
+
+Heavy interpretability deps (`transformer-lens`, `sae-lens`, ~150 MB
+combined) stay opt-in under `loupe[interp]`. Framework SDKs
+(`anthropic`, `openai`, `langgraph`, `pydantic-ai`, `llama-index`,
+`dspy`, `crewai`, `autogen`, `openhands`) also stay opt-in — most users
+only need one, and each is 10–20 MB.
+
+### Autopatch on env var
+
+`loupe._autopatch_hook` previously activated only when
+`~/.loupe/config.toml` existed or `LOUPE_AUTOPATCH=1` was explicit.
+v0.0.66 adds a third trigger: **any recognized provider key in the
+environment** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`,
+`DEEPSEEK_API_KEY`).
+
+Resolution order (unchanged):
+1. `LOUPE_AUTOPATCH=0` → off, always (explicit opt-out is final)
+2. `LOUPE_AUTOPATCH=1` → on, always
+3. `~/.loupe/config.toml` exists → on (user ran setup)
+4. **NEW**: any provider env var → on (user clearly intends to call an LLM)
+5. otherwise → off (transitive install never surprises anyone)
+
+`loupe._setup_providers.detect_from_env()` is the public helper for
+this; `loupe status` already used it under the hood.
+
+### Eight commands fixed for `loupe <cmd>` with no arguments
+
+Before:
+```
+$ loupe annotations
+Usage: loupe annotations [OPTIONS] TRACE_ID
+Try 'loupe annotations --help' for help.
+╭─ Error ─────────────────────────────────────────────────────
+│ Missing argument 'TRACE_ID'.
+╰─────────────────────────────────────────────────────────────
+```
+
+After:
+```
+$ loupe annotations
+annotations · 7 across 4 trace(s)
+  trace            step_id          category             severity  notes
+  ─────────────────────────────────────────────────────────────────────
+  …
+```
+
+**`loupe annotations`** (no arg) now lists EVERY annotation across
+every trace — same way `loupe list` defaults to "all".
+
+**`loupe show`, `report`, `tag`, `untag`, `diff`, `steer`, `causal`**
+(no args) print a friendly error, suggest `loupe list`, and pre-fill
+the example with a real trace id from the user's `~/.loupe/traces`
+(the most-recent one for single-trace commands, the two most-recent
+for `diff`). No more Typer "Missing argument 'TRACE_ID'" stubs.
+
+New shared helper: `_missing_trace_id_hint(command, extra_examples=...)`
+in `cli.py` — single source of truth for the friendly-error pattern.
+
+### `loupe init --file FILENAME --provider PROVIDER`
+
+```
+loupe init my-agent --provider anthropic --file main.py
+loupe init demo     --provider openai
+loupe init scratch  --file run.py
+```
+
+`scaffold.py` now ships **three first-class templates** (Gemini,
+Anthropic, OpenAI) keyed by provider. Each template:
+- imports the right SDK (`from google import genai` /
+  `import anthropic` / `import openai`)
+- reads the right env var (`GEMINI_API_KEY` / `ANTHROPIC_API_KEY` /
+  `OPENAI_API_KEY`)
+- calls the provider's native API shape
+- emits `@trace(framework="<provider>")` so the dashboard reports the
+  real provider
+- defaults to a sensible model (`gemini-2.5-flash`,
+  `claude-haiku-4-5-20251001`, `gpt-4o-mini`)
+
+The README inside the scaffolded project shows export syntax for
+bash/zsh, fish, AND PowerShell — no more fish-only assumptions.
+
+`validate_filename()` rejects paths, hidden files, and non-`.py`
+endings with a friendly error.
+
+### Dashboard onboarding adapts to your shell
+
+The dashboard's first-run empty-state used to show a fish-only
+`set -Ux GEMINI_API_KEY YOUR_KEY` — broken for the 95% of developers
+on bash / zsh. v0.0.66 adds `GET /api/onboarding` which detects the
+server-side `$SHELL` and returns the right snippet:
+
+- bash/zsh/sh/ksh/etc → `export NAME=VALUE`
+- fish              → `set -Ux NAME VALUE`
+- PowerShell        → `$env:NAME='VALUE'`
+- cmd.exe           → `set NAME=VALUE`
+
+`app.js` fetches it once at boot and rewrites the empty-state code
+block. Failure falls back silently to the bash default.
+
+### New tests
+
+- `tests/test_cli_no_args.py` — pins the friendly-error contract for
+  every fixed command. Regression: nothing may emit Typer's "Missing
+  argument" stub on a bare command call.
+- `tests/test_autopatch_env_detect.py` — exhaustive matrix on the
+  autopatch decision: 7 provider env vars × explicit-on × explicit-off
+  × config-file × nothing.
+- `tests/test_scaffold_variants.py` — every provider template renders
+  the right SDK imports + framework label; invalid filenames /
+  providers are rejected with usable errors.
+- `tests/test_ui_onboarding_shell.py` — shell detection covers bash,
+  zsh, fish, PowerShell, and the no-`SHELL` fallback.
+
+### Cleanup
+
+- README install section rewritten — single `pip install loupe` is now
+  the headline; provider extras are mentioned only as optional flavor.
+- All error messages that pointed at deleted extras (`pip install
+  'loupe[ui]'`, `pip install 'loupe[universal]'`) now point at
+  `pip install --upgrade loupe`. Catches: `ui/server.py`, `proxy.py`,
+  `cli.py` (`loupe ui` + `loupe proxy` error paths), scaffold README.
+
+---
+
+## [0.0.65] — 2026-05-21  ·  **Lean core — every file earns its place**
+
+Ruthless bloat pass with a world-class-MNC lens: strip anything that
+isn't load-bearing OR covered by tests, then re-elevate the core surface.
+The repo shrinks by ~700 lines of stale planning docs and ~5 duplicated
+example files, while picking up the test coverage that was missing on
+the one truly-untested integration. Versions across both SDKs are now
+in lockstep with a guard test that fails CI if they drift again.
+
+### Deleted (bloat that was no longer pulling its weight)
+
+- `docs/COLD_EMAIL_NEEL_NANDA.md` — personal outreach draft, never
+  belonged in the repo.
+- `docs/UNIVERSAL_CAPTURE_PLAN.md`, `docs/UX_PLAN.md`,
+  `docs/V0_2_ROADMAP.md` — stale planning artifacts; every feature they
+  described has since shipped.
+- `docs/loupe-trace.schema.json` — duplicate of the schema already
+  vendored at `src/loupe/_data/loupe-trace.schema.json` and documented
+  in `docs/SPEC.md`.
+- `USE_LOUPE.md` (top-level) — duplicated the 60-second quickstart
+  already in `README.md`.
+- `packages/loupe-py/examples/` and `packages/loupe-ts/examples/` —
+  superseded by `loupe init <name>`, which scaffolds a fresh, working
+  Gemini agent on demand. Single source of truth, zero rot.
+
+### Added — test the one path that was untested
+
+- `tests/test_langchain.py` — 5 smoke tests for `LoupeCallbackHandler`
+  covering llm-call pairs, tool-call pairs, chain errors, agent
+  actions, and the no-active-trace safe-noop path. The LangChain
+  integration had zero dedicated tests before; it does now.
+
+### Added — cross-package version parity guard
+
+- `tests/test_version_parity.py` — reads `loupe._version.__version__`,
+  `packages/loupe-ts/package.json::version`, and the
+  `VERSION` constant in `packages/loupe-ts/src/index.ts`. Fails CI if
+  any of the three drift. (The Python SDK was on `0.0.64`, the TS
+  `package.json` on `0.0.21`, and the TS source constant on `0.0.18`
+  — three different "current" versions in one monorepo.)
+
+### Synced — both SDKs now publish under `0.0.65`
+
+- `packages/loupe-py/pyproject.toml`, `_version.py`,
+  `packages/loupe-ts/package.json`, and `packages/loupe-ts/src/index.ts`
+  all read `0.0.65`. From here on, the parity test makes drift
+  impossible to ship.
+
+### CI cleanup
+
+- `.github/workflows/ci.yml` no longer lints a non-existent
+  `examples/` dir, no longer shells out to deleted example scripts.
+  The cross-language wire-format check now uses inline `trace()`
+  snippets so it never depends on disk-resident demo files again.
+
+---
+
+## [0.0.64] — 2026-05-20  ·  **Surface what's built — discoverability + polish**
+
+Audit pass with a world-class-product lens: every advanced feature we
+shipped over the last 6 weeks (steering, attribution patching, SAE
+registry, retention, encryption, redaction, Parquet) was reachable via
+Python imports OR config-file edits, but **invisible from the CLI**.
+This release surfaces every one of them.
+
+### New top-level commands
+
+#### `loupe status` — the at-a-glance install dashboard
+One screen, four blocks: **capture** (autopatch state, encryption,
+retention, redaction count) · **providers** (which keys are loaded
++ from where) · **activity** (traces on disk, last capture, last-24h
+calls + cost + failures) · **Next** (context-sensitive hints).
+
+Mirrors `vercel`, `stripe`, `gh status` in their respective ecosystems.
+Answers "is Loupe live, what's it watching, and what did it cost
+today?" without reading any docs.
+
+#### `loupe config` — programmatic settings editor
+```
+loupe config list                       # every settable key + current value
+loupe config get retention.max_age_days
+loupe config set retention.max_age_days 30
+loupe config set encryption.enabled true
+loupe config add-redact 'EMP-\d{6}'    # custom regex
+loupe config path                       # echo the file path
+```
+No more "edit `~/.loupe/config.toml` by hand" friction. Type coercion
+catches bad values; the redactor's cache invalidates on `add-redact`
+so subsequent captures pick the pattern up immediately.
+
+#### `loupe steer` — the previously hidden Steerer
+```
+loupe steer abc12345 --feature 8842                # ablate
+loupe steer abc12345 --feature 8842 --multiplier 2 # amplify
+loupe steer abc12345 --feature 8842 --sae gemma-2-2b
+```
+The replay is captured as a new trace whose `metadata.steered_from`
+links back; `loupe diff <orig> <steered>` works side-by-side.
+
+#### `loupe causal` — clean-vs-corrupted attribution patching
+```
+loupe causal <trace> \
+    --corrupted "Same prompt with the ambiguity removed." \
+    --answer "No"
+```
+Implements the Anthropic 2024 paper recipe. Ranks features by signed
+effect size at the SAE layer. Pair with `loupe steer` to test causal
+hypotheses.
+
+#### `loupe attribute --list-saes` — discoverable surrogate models
+Prints every SAE entry the registry covers (`gpt2-small`, `gemma-2-2b`,
+`pythia-70m`) so users know what `--sae <label>` accepts.
+
+### `loupe setup` (already-configured branch) calls `status` first
+
+Used to show just a list of provider names. Now renders the full
+status dashboard (capture, providers, activity) and then lists the
+three setup-specific actions (`--provider X`, `--remove X`, `--reset`).
+One mental model, surfaced consistently.
+
+### Eight new `loupe explain` topics
+
+`status` · `config` · `retention` · `encryption` · `redact` · `steer` ·
+`causal` · `sae-registry`. Every advanced feature now has a one-screen
+explanation reachable from the CLI itself — no leaving the terminal.
+
+### Why this matters
+
+A world-class product surfaces every capability where users will look
+for it. Before this release Loupe had genuinely novel features (causal
+attribution, feature steering, encryption-at-rest, configurable
+redaction) that you'd only find by reading the source. After this
+release, every capability is one `loupe …` command away.
+
+## [0.0.63] — 2026-05-20  ·  **Phase J — production hardening (J1·J2·J3·J6)**
+
+Enterprise-ready production controls. Four features, all opt-in, all
+backward-compatible with existing installs.
+
+### J1 — Trace retention policy
+
+New ``[retention]`` block in ``~/.loupe/config.toml``:
+
+```toml
+[retention]
+max_age_days = 14         # 0 = unlimited (default)
+keep_tagged  = true       # never delete annotated traces (default)
+```
+
+`loupe purge --auto` reads this and applies it — drop into a cron / systemd
+timer for nightly cleanup. Without `--auto`, the existing
+`--older-than 7d --yes` shape still works.
+
+### J2 — Configurable redaction patterns
+
+New ``[redact]`` block:
+
+```toml
+[redact]
+patterns = ["INTERNAL-[A-Z]{4}-\\d{4}", "ssn:\\s*\\d{3}-\\d{2}-\\d{4}"]
+```
+
+User-supplied regexes are compiled once, cached, and applied after the
+built-in credential patterns. Invalid regexes are silently skipped — the
+redactor never raises into the capture path. The cache invalidates on
+config file change.
+
+### J3 — Encryption at rest (opt-in)
+
+New ``[encryption]`` block:
+
+```toml
+[encryption]
+enabled = true
+```
+
+When enabled:
+- ``JSONLStore.save()`` wraps the document in a ``LOUPE-ENC-V1:<token>``
+  envelope (Fernet / AES-128 + HMAC).
+- The per-machine key lives at ``~/.loupe/.key`` (mode 0600).
+- ``read_trace_text(path)`` decrypts transparently. All Loupe readers
+  (dashboard, OTLP export, Parquet export, `loupe show`) route through
+  this helper so encryption is invisible downstream.
+- Existing plaintext JSONL files stay readable — backward compatible.
+- Encryption failure during save falls back to plaintext rather than
+  losing the trace silently.
+
+Threat model: laptop / VM disk theft. Strict environments should still
+layer dm-crypt / FileVault / BitLocker on top.
+
+### J6 — Parquet export for analytics
+
+```bash
+loupe export --format parquet                   # → loupe-traces.parquet
+loupe export --format parquet --trace-id abc1   # one trace subset
+```
+
+One row per Step, 23 typed columns (trace_id, step_kind, provider, model,
+duration_ms, input_tokens, output_tokens, finish_reason, http_status,
+rate_limited, error, inputs_json, outputs_json, …). ZSTD-compressed
+Parquet, ready for `pandas.read_parquet`, DuckDB, Spark, Snowflake,
+Databricks. Empty exports still emit a valid schema-only Parquet so
+downstream pipelines don't break.
+
+### Roll-up
+
+- 16 new tests in ``test_production_hardening.py`` (retention loading +
+  CLI, custom regex redaction, encryption round-trip + key file mode +
+  graceful fallback, Parquet shape).
+- **471 Python tests passing** (was 455), lint clean.
+- Public API: ``loupe._crypto``, ``loupe._parquet`` exported.
+- No new hard dependencies — `cryptography` is already transitive via
+  FastAPI; `duckdb` is already pinned.
+
+## [0.0.62] — 2026-05-20  ·  **UX strip — remove gimmicks, fix tour positioning**
+
+Course-correction on the v0.0.61 push. The dashboard should feel like a
+serious forensics tool, not a vim demo. Strip the noise; fix what was
+broken.
+
+### Removed
+
+- **Keyboard shortcuts** (`j/k/h/l/t/e/v/Shift+T/?`) — all of them.
+  Esc-closes-tour is the only key-handler the dashboard listens for now.
+- **`?` Shortcuts modal** — gone.
+- **Theme picker (light/dark/auto)** — single dark theme, no toggle.
+  Stripped the light-theme CSS rules, `data-theme` attribute, inline
+  pre-paint script, the `applyTheme/currentTheme` JS.
+- **Detail ⇄ Timeline view switcher in the topbar** — gone. Removed the
+  timeline view JS (`renderTimeline`), CSS, and the `v` shortcut.
+- **Large "Tour" + "Shortcuts" buttons in the sidebar footer** — the
+  whole `sidebar-foot` block is gone.
+
+### Kept (but smaller / fixed)
+
+- **Welcome tour stays.** Auto-plays on first visit; replayable from a
+  small inline `tour` link tucked into the sidebar header (next to the
+  trace count).
+- **Tour positioning rewritten** so the card never overlaps the
+  highlighted target. New algorithm:
+    1. Measure the card's actual size after content lands.
+    2. Try the requested placement, then `right` → `left` → `below` →
+       `above`. Pick the first that fits the viewport AND doesn't
+       overlap the highlighted rect.
+    3. Last-resort clamp into viewport so the card is always reachable.
+  Resizing the window mid-tour re-runs the layout pass.
+
+### What feels different
+
+- One less topbar element (no Detail/Timeline pip) — cleaner header.
+- One less sidebar footer block — more vertical room for the trace list.
+- Tour cards always sit BESIDE the thing they're describing, never on
+  top of it.
+
+No backend changes. UI tests still pass clean (25/25 in
+`test_ui_server.py`). Pure cleanup release.
+
+## [0.0.61] — 2026-05-20  ·  **Phase G — Dashboard UX overhaul (7 sub-phases)**
+
+Every part of the dashboard a user touches got the world-class treatment.
+All seven sub-phases (G1–G7) shipped in one release.
+
+### G1 — Theme system (light / dark / auto)
+
+- `<html data-theme="…">` attribute drives a complete light or dark palette
+  via CSS custom properties.
+- 3-pip segmented control in the sidebar footer; persists to localStorage.
+- `auto` follows `prefers-color-scheme` and flips with the OS.
+- Inline pre-paint script applies the saved theme BEFORE the stylesheet
+  loads → zero flash-of-wrong-theme.
+- `Shift+T` keyboard shortcut cycles through themes.
+- All cross-theme transitions limited to color + border to avoid layout
+  jank.
+
+### G2 — Conversation bubble rendering
+
+Captured `inputs.messages` (and Gemini-style `inputs.contents`) now render
+as a chat thread instead of raw JSON:
+
+- One bubble per role: `user`, `assistant`, `system`, `tool`.
+- Anthropic content blocks (`text` + `tool_use` + `image`) collapsed into
+  one readable bubble.
+- The assistant's reply (`outputs.text`) appended as a final bubble with a
+  tiny amber dot marking it as the actual reply (not history).
+- Tool calls rendered as compact ``name(args)`` rows.
+- Multimodal media (post-`scrub_media`) shown as
+  `[image · image/png · 23.4 KB]` chips.
+- Raw JSON view is still available — collapsed by default under a
+  `<details>` summary.
+
+### G3 — Multi-trace side-by-side diff view
+
+- Select 2–4 traces in the sidebar → bulk action bar gains a **Diff**
+  button.
+- Side-by-side grid, one column per trace, one row per step index.
+- Steps with matching `(kind, name)` are aligned (subtle background);
+  diverging cells highlighted in amber for instant visual scan.
+- Empty cells (one trace ran fewer steps) get a dashed placeholder.
+
+### G4 — Timeline view
+
+- Topbar pip toggle: **Detail ⇄ Timeline**, or press `v`.
+- Horizontal time axis with 5 evenly-spaced tick labels (relative time).
+- One bar per trace, color-coded:
+  green = ok, amber = tagged, red = failed.
+- Click or `Enter` opens that trace in detail view.
+- Legend pinned to the timeline header.
+
+### G5 — Keyboard navigation polish (vim-style)
+
+- `j` / `k` (or arrow keys): next / previous **step**.
+- `h` / `l`: previous / next **trace** in the sidebar.
+- `t`: tag the selected step.
+- `e`: export current trace as markdown.
+- `v`: toggle Detail ⇄ Timeline.
+- `Shift+T`: cycle theme.
+- `/`: focus search; `Esc`: clear focus + close modals.
+- `?`: show shortcuts modal (now grouped: Navigation / Actions / Views /
+  Dialogs).
+
+### G6 — Step detail polish
+
+- `inputs` / `outputs` / `metadata` collapsed into `<details>` blocks
+  (with hand-tuned triangle marker) so the conversation view is the
+  primary thing the eye lands on.
+- Copy button overlay on every `<pre>` — hidden by default, revealed on
+  hover. Clipboard fallback for browsers without `navigator.clipboard`.
+- **Deep links**: every open trace updates the URL to
+  `#trace-<id>`; sharing a specific step works via
+  `#trace-<id>/step-<step-id>`. Resolved on first paint.
+- `🔗 Share` button on the detail header copies the deep link.
+
+### G7 — Mobile responsive sweep
+
+- Below 900px: sidebar stacks on top of viewer, view switcher wraps to
+  its own row.
+- Below 640px:
+  - Brand subtitle + live indicator collapse to save vertical space.
+  - Trace list rows lose the status column (carried by the colored
+    border-left instead).
+  - Touch targets bumped to 18px checkboxes + 36px+ buttons (WCAG 2.5.5).
+  - Bulk action bar widens to full-width with comfortable button padding.
+  - Help modal goes full-bleed.
+- Diff view becomes horizontally scrollable so columns don't squish.
+
+### Roll-up
+
+Pure frontend release — no Python API changes, no new dependencies.
+The dashboard now feels like a real product: themed, keyboard-driven,
+mobile-friendly, with sharable deep links and a conversation-first detail
+panel.
+
+- 32 UI server tests still pass (no backend regressions).
+- 455 Python + 44 TS tests still pass.
+- All CSS uses custom properties → adding a new theme = adding one
+  `:root[data-theme="…"]` block.
+
+## [0.0.60] — 2026-05-20  ·  **Three-pillar completion — multimodal, LoupeBench, deep interpretability**
+
+The deepest release so far. Closes the 5% gap on the capture pillar,
+ships the LoupeBench v0.1 corpus, and adds the two interpretability
+moats that no other observability tool has: a multi-model SAE registry
++ feature steering + attribution patching.
+
+### Pillar 1 — Forensics → 100%
+
+**Multimodal + tool-call hygiene.** `loupe._multimodal` strips inline
+base64 images / PDFs / audio (Anthropic image blocks, OpenAI vision
+`image_url` data URIs, Gemini `inlineData`) and replaces them with
+`{sha256, size_bytes, media_type}` summaries before they hit disk.
+Two captures of the same image share the same sha256 → the dashboard
+can deduplicate.
+
+**Tool-call extraction.** Three provider shapes (Anthropic `tool_use`
+blocks, OpenAI `tool_calls` arrays, Gemini `functionCall` parts) get
+normalized into one ``[{name, arguments, id?}, ...]`` list and surfaced
+as `inputs.tool_calls` (history) + `outputs.tool_calls` (this turn).
+Same code path lives in both `loupe.proxy` and
+`loupe.integrations.httpx` so cross-language captures stay consistent.
+
+**Test coverage:** 15 new tests in `test_multimodal.py`.
+
+### Pillar 3 — LoupeBench v0.1 (curated, importable, gateable)
+
+- **`bench/loupebench-v0.1.jsonl`** — 5 hand-curated realistic failures,
+  one per category (hallucination, loop, tool-misuse, off-task,
+  context-drop). Self-contained records that replay against any
+  configured provider.
+- **`bench/loupebench-v0.1.schema.json`** — formal JSON Schema for
+  corpus records.
+- **`bench/loupebench-leaderboard.schema.json`** — formal schema for
+  result entries.
+- **`loupe bench --corpus <source>`** — load from bundled name
+  (`loupebench-v0.1`), local file, or HTTPS URL (capped at 10 MB).
+  Replays each record, writes a leaderboard JSON.
+- **`loupe bench --gate fail-rate=20%`** — CI gate. Exits 1 if more
+  than the threshold of replays errored out. Drop into any GitHub
+  Action.
+- **`loupe bench --out lb-result.json`** — writes the leaderboard
+  entry for sharing / archiving.
+
+**Test coverage:** 10 new tests in `test_bench_corpus.py`.
+
+### Pillar 2 — Interpretability (the moat)
+
+- **`loupe._sae_registry`** — explicit table of supported (model,
+  release, sae_id) tuples. Currently 3 entries:
+  `gpt2-small` (default), `gemma-2-2b` (Gemini surrogate), `pythia-70m`
+  (tiny). `recommended_sae_for("claude-haiku-4-5")` routes closed
+  models to the right open-weight surrogate.
+- **`loupe.steering.Steerer`** — feature steering primitive. Run a
+  prompt through a surrogate model with one SAE feature
+  dampened/amplified; the steered continuation lands as a NEW Loupe
+  trace whose `metadata.steered_from` links to the original. Same
+  Step shape, so `loupe diff` and `loupe attribute` Just Work on
+  steered runs.
+- **`loupe.attribution_patching.AttributionPatcher`** — *causal*
+  interpretability via clean-vs-corrupted patching (Anthropic 2024
+  paper). Given a `PatchPair(clean_prompt, corrupted_prompt, answer)`,
+  ranks features by |Δactivation| at the SAE layer. Bigger signal =
+  more causally responsible for the swing in the answer logit.
+- **`SAEAttributor.from_registry(captured_model)`** — one-liner that
+  picks the right surrogate for any captured model.
+
+All three modules expose only data + orchestration without `[interp]`
+deps — the heavy GPU pass is lazily loaded on first `.run()` call,
+exactly like the existing `SAEAttributor`. Public API exported from
+`loupe.__init__`.
+
+**Test coverage:** 23 new tests across `test_sae_registry.py` and
+`test_steering_and_patching.py`. The real forward-pass tests stay
+behind the `[interp]` extra in `test_attribution.py` (untouched).
+
+### Roll-up
+
+- **455 tests passing** (was 432)
+- **15 new files** total (multimodal, sae_registry, steering,
+  attribution_patching, bench corpus + schema + leaderboard schema,
+  4 new test modules)
+- Lint clean, mypy clean on touched files
+- All three pillars now at ~100% on their non-research deliverables
+
+## [0.0.59] — 2026-05-20  ·  **Truly frictionless: setup = autopatch ON**
+
+The "install + setup" promise is now an actual promise. No env var, no
+shell rc edits, no NODE_OPTIONS to remember.
+
+```bash
+pip install loupe
+loupe setup            # picks a provider + saves the key
+python my_agent.py     # captured automatically — zero code, zero env vars
+```
+
+### The architectural change
+
+Running `loupe setup` writes `~/.loupe/config.toml`. The `.pth` autopatch
+hook now treats the presence of that file as "the user wants capture",
+and flips ON without needing `LOUPE_AUTOPATCH=1` in the environment.
+
+Resolution order (same in Python + TS):
+
+```
+LOUPE_AUTOPATCH=0          → always OFF (explicit opt-out)
+LOUPE_AUTOPATCH=1          → always ON  (explicit opt-in, works before setup)
+env var unset:
+  ~/.loupe/config.toml exists  → ON   (you ran `loupe setup`)
+  config file missing          → OFF  (probably transitive install)
+```
+
+The "missing-config → OFF" branch keeps libraries that depend on Loupe
+safe — installing Loupe as a transitive dep no longer surprises anyone
+with sudden capture activation.
+
+Cost when off: one ``os.environ.get`` + one ``Path.exists`` ≈ 3 µs at
+Python startup. No imports, no globals touched.
+
+### `loupe run` — universal subprocess runner
+
+`loupe run` now drives **any** command, not just Python:
+
+```bash
+loupe run my_agent.py "question"     # Python in-process
+loupe run node my-agent.js            # Node, with NODE_OPTIONS wired
+loupe run tsx scripts/eval.ts         # TS via tsx
+loupe run go run main.go              # Go (Python.pth no-op, hint: use proxy)
+loupe run -- sh -c 'exit 42'          # explicit `--` separator, exit propagates
+```
+
+For Node / TS commands the runner auto-locates `@loupe/sdk/autopatch`
+in nearby `node_modules` and adds it to `NODE_OPTIONS=--require ...`,
+so capture activates without any package.json change. Exit codes
+propagate cleanly (sh exit 42 → loupe run exit 42).
+
+### Dashboard — multi-trace bulk operations (Phase C)
+
+Checkbox per trace, floating action bar when ≥1 selected, bulk delete
+with confirm dialog. Annotation sidecars are cleaned up alongside their
+trace so tag counts stay accurate. Backend cap: 500 ids per request.
+
+### Dashboard — 14-day spend sparkline (Phase D)
+
+New `/api/cost-timeseries?days=N` endpoint returns daily USD + call
+counts + rate-limit incidents, zero-filled for empty days. Sidebar
+renders a tiny SVG bar chart at the top, hidden until the first
+priced call lands so empty installs don't show a placeholder. Bars
+turn amber on days with rate-limit incidents.
+
+### Tests
+
+- **15 new Python tests** for: on-by-default autopatch (3), universal
+  runner exit-code propagation (5), dashboard bulk-delete (5),
+  cost-timeseries endpoint (3 — zero-fill, clamp, real attribution).
+- **2 new TS tests** for on-by-default + explicit opt-out.
+- **401 Python tests passing** (was 386) · **44 TS tests** (was 42)
+- Lint clean, mypy clean on touched files.
+
+### End-to-end verification (real subprocess)
+
+Walked through the actual zero-friction install:
+
+```
+pip install loupe
+loupe setup                        # writes ~/.loupe/config.toml
+python /tmp/agent.py               # NO env var, NO Loupe imports
+ls ~/.loupe/traces/                # → 1 trace captured
+```
+
+The captured trace has `framework: "autopatch"`, `name: "agent"` (from
+the script filename), structured JSON `messages` array — exactly what
+the v0.0.58 audit promised.
+
+## [0.0.58] — 2026-05-20  ·  **Backend audit + four fixes**
+
+Real end-to-end audit of the developer journey (install → autopatch →
+capture → dashboard → export). Four bugs found, all fixed.
+
+### Bug #1 — captured `messages` was a Python `repr` string
+
+`_truncate` converted any list/dict to `repr(value)` unconditionally,
+so a captured Anthropic request body would land in the trace JSONL as
+
+```json
+"messages": "[{'role': 'user', 'content': 'hi'}]"
+```
+
+— a Python-repr string with single quotes, not valid JSON. The dashboard
+couldn't render structured messages and downstream JSON parsers
+choked. Fixed in both `integrations/httpx.py` and `proxy.py`: lists +
+dicts now stay as native JSON structures whenever their serialized
+length fits the limit. Only stringified on actual overflow.
+
+After fix:
+
+```json
+"messages": [{"role": "user", "content": "hi"}]
+```
+
+### Bug #2 — autopatch trace name was the same for every script
+
+Every autopatched script produced a trace with `name: "autopatch"`,
+`framework: "auto"`. Two issues:
+
+- `loupe list` showed identical names — undistinguishable runs.
+- Field convention was reversed vs the TS SDK (TS uses
+  `name: "auto"`, `framework: "autopatch"`).
+
+Fixed: name is now derived from `sys.argv[0]` stem (e.g. `my_agent` from
+`my_agent.py`), framework is the stable `"autopatch"` signal. Falls
+back to `"auto"` for REPL / `python -c` / embedded interpreters.
+
+### Bug #3 — proxy trace was named `"proxy"` for every request
+
+Every proxy-captured request landed with `name: "proxy"`,
+`framework: "proxy"`. Now `name = provider` (anthropic / openai / gemini)
+so `loupe list` distinguishes captures across providers in one glance.
+
+### Bug #4 — broken `explain` hints
+
+`loupe ask` (no args) printed `→ loupe explain ask` and `loupe run`
+(no args) printed `→ loupe explain run` — but neither topic existed.
+Added `ask`, `chat`, and `run` to `_EXPLAIN_TOPICS` so every hint
+resolves.
+
+### Verification
+
+End-to-end audit confirmed:
+
+- Fresh install → `loupe doctor` reports clean state ✓
+- `LOUPE_AUTOPATCH=1 python my_agent.py` (no Loupe imports) captures ✓
+- Captured `messages` is a JSON list, not a repr string ✓
+- Trace named after the script ✓
+- `loupe proxy` forwards real requests to a real upstream, captures
+  the round-trip with provider-named traces ✓
+- `loupe list` / `show` / `cost` / `export --format otlp` all read
+  the captured traces cleanly ✓
+- Cross-language Node autopatch (separate subprocess) still captures
+  correctly ✓
+- 383 Python tests · 42 TS tests · lint clean · typecheck clean
+
+## [0.0.57] — 2026-05-20  ·  **CLI consolidation + six providers**
+
+Polish pass focused on making the CLI feel curated rather than catalogued.
+
+### `loupe setup` now supports six providers
+
+The wizard's picker was hard-coded to Gemini / Anthropic / OpenAI. It now
+ships a data-driven registry that adds **Mistral, Groq, DeepSeek**:
+
+```
+    1. gemini      free tier · fastest path to a first trace
+    2. anthropic   best for production agent runs
+    3. openai      GPT-4o, o-series · widest framework support
+    4. mistral     European · open + frontier weights
+    5. groq        LPU inference · ultra-low latency
+    6. deepseek    open-weights · low cost · long context
+```
+
+Mistral, Groq, and DeepSeek all speak OpenAI-compatible HTTP so they
+share one invocation path in the SDK — adding the three only needed
+data-table entries, no new code paths in `chat` / `ask` / `replay`.
+
+The registry (`loupe._setup_providers.SETUP_PROVIDERS`) is the single
+source of truth used by:
+
+- `loupe setup` (picker, key URL, persistence, default model)
+- `loupe ask` / `loupe chat` (invocation)
+- `loupe.config._env_keys_for()` (env-var override lookup)
+
+Adding a provider = one row in the registry, no other code changes.
+
+### Surface cleanup — 30 → 27 commands
+
+Three duplicates were folded into the commands they were duplicating:
+
+| Cut       | Use instead                          | Why |
+|-----------|--------------------------------------|-----|
+| `try`     | `loupe ask "hello"`                  | `try` was a canned-prompt subset of `ask` |
+| `start`   | `loupe ui` (now auto-opens browser)  | `start` and `ui` both opened the dashboard |
+| `otlp`    | `loupe export --format otlp`         | One export command, two formats |
+
+`loupe ui` now ships the polish `start` had: trace-count line, auto-open
+browser, friendly empty-state hint. Opt out with `--no-browser` for
+headless / remote use.
+
+`loupe export` now takes `--format` (default `loupebench`, also `otlp`)
+plus the OTLP-specific `--trace-id` and `--service-name` flags.
+
+### Other cleanups
+
+- `_invoke_provider` (single-shot wrapper) removed — every call site
+  now goes through `_invoke_with_history`, which routes to the registry.
+- The 90-line per-provider switch in `_invoke_with_history` collapsed
+  to a 2-line registry delegation.
+- Tests cover: registry shape, all six provider scripted setup paths,
+  cut-command tests (start/try/otlp removed from `_registered_command_names`),
+  `export --format otlp` writes a valid OTLP doc, rejected formats.
+
+### Test coverage
+
+383 Python tests passing (was 375), 42 TS tests, lint clean, mypy clean
+on every file we touched.
+
+## [0.0.56] — 2026-05-20  ·  **Live tail + Node autopatch + OTLP export**
+
+Three more pieces fall into place for the zero-friction promise.
+
+### `loupe proxy --tail` — live one-line capture printout
+
+Default-on. Every captured request renders a sparse, colour-coded line in
+the proxy terminal as it lands:
+
+```
+14:22:09  ●  anthropic:claude-haiku-4-5            200   342ms   ↑12 ↓48   ab12cd34
+14:22:11  ●  anthropic:claude-haiku-4-5            429    18ms   ↑·  ↓·    cd34ef56
+14:22:14  ●  openai:gpt-4o-mini                    200   281ms   ↑8  ↓21   ef5678ab
+```
+
+You see capture working *immediately*, before opening the dashboard.
+Status dot is green / amber / red. `--quiet` suppresses for CI / daemon use.
+Callback exceptions never break capture — the JSONL is the source of truth.
+
+### `@loupe/sdk/autopatch` — Node parity with `LOUPE_AUTOPATCH`
+
+The TypeScript SDK now ships the same one-env-var pattern Python got in
+v0.0.54. Combine with `NODE_OPTIONS="--require @loupe/sdk/autopatch"` and
+zero source-code changes capture every fetch call to a known LLM provider:
+
+```fish
+set -x LOUPE_AUTOPATCH 1
+set -x NODE_OPTIONS "--require @loupe/sdk/autopatch"
+
+node my-agent.js          # captured, no source changes
+tsx  my-agent.ts          # captured
+```
+
+When `LOUPE_AUTOPATCH` is unset the module is a near-zero-cost no-op.
+When set, fetch calls made *outside* any user-defined `trace(...)` block
+get wrapped in an implicit one-call trace (mirrors the Python
+`_implicit_trace_context`).
+
+### `loupe otlp` — OpenTelemetry OTLP/HTTP JSON export
+
+Captured Loupe traces now convert to **OTLP JSON spans** with the
+**GenAI Semantic Conventions** (`gen_ai.system`, `gen_ai.request.model`,
+`gen_ai.usage.input_tokens`, `gen_ai.response.finish_reason`,
+`gen_ai.response.rate_limited`, ...). POST the file to any OTLP/HTTP
+collector — Datadog APM, Honeycomb, Jaeger, Tempo, Grafana Cloud, New
+Relic, AWS X-Ray, anything OTel-compatible:
+
+```bash
+loupe otlp --out loupe.json
+curl -X POST $COLLECTOR/v1/traces \
+     -H 'content-type: application/json' \
+     --data-binary @loupe.json
+```
+
+Flags:
+- `--trace-id <prefix>` — export a subset.
+- `--service-name <name>` — set the `service.name` resource attribute.
+- `--out -` — stream to stdout (pipe to anything).
+
+`loupe.kind`, `loupe.transport`, `loupe.tool.name`, and `http.*` attributes
+land on every span so backends that aren't GenAI-aware still see useful
+columns. Error/5xx steps carry `status.code = ERROR` with the upstream
+status as the message.
+
+### Test coverage
+
+- 1 new proxy test for the tail callback (errors in callback must not
+  break capture). Python: **375 tests**, up from 359.
+- 5 new TS tests for Node autopatch (implicit trace, no-op when disabled,
+  truthy values, no pollution on unknown providers, side-effect import
+  safety). TS: **42 tests**, up from 37.
+- 15 new OTLP tests covering identifier normalisation, GenAI semantic
+  convention attributes, error status propagation, SpanKind selection,
+  end-to-end JSONL → OTLP roundtrip, prefix filtering, malformed-file
+  skip.
+
+### Where the plan stands
+
+- ✅ Phase A — universal HTTP proxy (v0.0.55)
+- ✅ Phase B — live capture feedback (v0.0.56)
+- ✅ Phase E — OTLP interop (v0.0.56)
+- ✅ Phase F — Node autopatch parity (v0.0.56)
+- ⏭ Phase C — multi-trace bulk ops in dashboard (0.1.0)
+- ⏭ Phase D — time-series cost / activity charts (0.1.0)
+
+## [0.0.55] — 2026-05-20  ·  **`loupe proxy` — universal HTTP capture for any language**
+
+The second pillar of zero-friction capture. ``LOUPE_AUTOPATCH`` (v0.0.54)
+made Python agents capture themselves. ``loupe proxy`` extends that
+promise to **any language, any framework, any client** — Python, Node,
+Go, Rust, Java, even raw ``curl``.
+
+```fish
+loupe proxy --provider anthropic --port 7878
+set -x ANTHROPIC_BASE_URL http://127.0.0.1:7878
+
+python my_agent.py        # captured
+node my-agent.js          # captured
+go run my-agent.go        # captured
+curl http://127.0.0.1:7878/v1/messages -d '...'   # captured
+```
+
+### Highlights
+
+- **Auto-detect** mode resolves the upstream from the request path:
+  ``/v1/messages`` → Anthropic, ``/v1/chat/completions`` → OpenAI,
+  ``/v1beta/models/...`` → Gemini, ``/openai/v1/chat`` → Groq.
+- **Pinned** mode (``--provider anthropic``) routes every request to
+  one upstream — useful for clients that hit nonstandard paths.
+- **Override** mode (``--upstream URL``) sends to self-hosted gateways
+  (LiteLLM, OpenRouter mirrors, internal proxies).
+- **Streaming SSE pass-through** — chunks are forwarded byte-for-byte
+  so first-token latency is unchanged. The streamed text is reassembled
+  in-memory and stored exactly like a non-streamed response, so
+  ``loupe cost`` and ``loupe attribute`` work identically on
+  proxy-captured traces.
+- **502 + failed trace on upstream errors** — the proxy never crashes
+  silently. Network failures are recorded so you see them in
+  ``loupe list``.
+- ``loupe explain proxy`` — built-in topic page in the CLI.
+
+### How proxy-captured Steps differ from autopatch Steps
+
+They don't — the wire format is identical (``kind: "llm-call"``,
+``inputs.provider``, ``outputs.text``, etc.), with one new metadata
+field ``transport: "proxy"``. The dashboard, ``loupe cost``,
+``loupe attribute``, ``loupe diff``, and ``loupe bench`` all treat
+proxy-captured traces as native first-class citizens.
+
+### Test coverage
+
+21 new tests in ``tests/test_proxy.py``:
+
+- Path → provider routing (Anthropic, OpenAI, Gemini, unknown).
+- Upstream URL resolution (forced / Host / path).
+- Step extraction for Anthropic + Gemini model + token shapes.
+- Rate-limit (429) detection from both HTTP status and Gemini body.
+- SSE assembly for Anthropic / OpenAI / Gemini formats + malformed-frame
+  skip.
+- End-to-end: forwarded request preserves method, URL, headers, body;
+  captured trace has the right Step shape.
+- 400 on unknown path (no upstream call, no trace written).
+- 502 + failed-trace metadata on upstream connection errors.
+- Streaming SSE round-trip: chunks forwarded, reassembled text captured.
+
+359 tests passing.
 
 ## [0.0.54] — 2026-05-19  ·  **LOUPE_AUTOPATCH — zero-code agent capture**
 

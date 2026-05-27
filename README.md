@@ -10,7 +10,7 @@ Open-source forensics + interpretability for LLM agents. Record every step, repl
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](#)
 [![Node](https://img.shields.io/badge/node-20%20%7C%2022%20%7C%2024-brightgreen.svg)](#)
-[![Tests](https://img.shields.io/badge/tests-339%20passing-success.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-546%20passing-success.svg)](#)
 
 </div>
 
@@ -32,84 +32,115 @@ That's not engineering. That's superstition.
 ## Install (free for everyone)
 
 ```bash
-pip install loupe                  # core + CLI
-pip install 'loupe[ui]'            # adds the local web dashboard
+pip install loupe
+```
+
+That single line gives you the CLI, the local dashboard (`loupe ui`), the
+universal HTTP proxy (`loupe proxy`), zero-code autopatch capture for any
+`httpx`-based LLM client, and the JSONL store. No extras to remember.
+
+Pick one provider SDK to capture from (~10–20 MB each — you only need the
+one you actually use):
+
+```bash
+pip install anthropic         # or pin in your own requirements
+pip install openai
+pip install google-genai
+```
+
+Or grab a framework integration when you need it:
+
+```bash
 pip install 'loupe[langgraph]'     # LangChain / LangGraph callback handler
-pip install 'loupe[anthropic]'     # Anthropic SDK auto-instrumentation
-pip install 'loupe[openai]'        # OpenAI SDK auto-instrumentation
 pip install 'loupe[pydantic-ai]'   # Pydantic AI auto-instrumentation
 pip install 'loupe[llama-index]'   # LlamaIndex RAG capture
 pip install 'loupe[dspy]'          # DSPy module capture
 pip install 'loupe[crewai]'        # CrewAI multi-agent capture
 pip install 'loupe[autogen]'       # AutoGen ConversableAgent capture
 pip install 'loupe[openhands]'     # OpenHands coding agent capture
-pip install 'loupe[universal]'     # patch ANY httpx-based LLM client
+pip install 'loupe[interp]'        # SAE attribution + steering (~150 MB; heavy)
 ```
-
-Or, all at once: `pip install 'loupe[ui,universal,langgraph,anthropic,openai,pydantic-ai,llama-index,dspy,crewai,autogen,openhands]'`
 
 > Loupe is currently in pre-alpha; the canonical install path is `pip install -e .` from this repo until v0.1.
 
 ## What you can do (every command)
 
 ```text
-Capture & inspect
-  loupe                                     Welcome screen + quickstart
-  loupe init <name>                         Scaffold a Loupe-instrumented Gemini agent
-  loupe start                               Open the dashboard (auto-opens browser)
-  loupe ui [--port 7860]                    Launch the local forensic dashboard
-  loupe list                                List all captured traces (adapts to terminal width)
-  loupe show <trace-id>                     Print one trace step-by-step in the terminal
-  loupe diff <a> <b>                        Side-by-side step alignment of two traces
+Get started
+  loupe                                     Smart welcome — pitches Loupe + your next step
+  loupe onboard                             Run Loupe on YOUR project: detect your agent,
+                                            capture a real trace, open the dashboard
+  loupe init <name> [--provider …] [--file] Scaffold a working starter (Gemini / Anthropic / OpenAI)
+  loupe setup                               Configure / add / remove a provider key
+  loupe status                              One-screen overview of your install
 
-Aggregate & tag
-  loupe stats                               Total counts, framework + failure histograms
+Use it (no code required)
+  loupe ask "…"                             One captured LLM call, like ChatGPT in the terminal
+  loupe chat                                Interactive REPL — every turn captured
+  loupe run <cmd>                           Run ANY command (Python/Node/Go/curl) under capture
+  loupe proxy [--provider …]                Universal HTTP capture — any agent, any language
+
+Inspect captured runs
+  loupe list                                Every captured trace (adapts to terminal width)
+  loupe show <trace-id>                     Step-by-step: prompt → reply → tokens → errors
+  loupe ui [--port 7860]                    Launch the local forensic dashboard (auto-opens browser)
+  loupe annotations [<trace>]               Tags on one trace — or across every trace
+  loupe diff <a> <b>                        Side-by-side step alignment of two traces
+  loupe stats                               Counts, framework + failure histograms
+
+Analyze + benchmark
   loupe tag <trace> <step> <category>       Mark a failing step for LoupeBench
   loupe untag <trace> <step>                Remove a tag
-  loupe annotations <trace>                 List tags on one trace
-  loupe export [--out FILE]                 Bundle annotated failures into LoupeBench JSONL
-
-Mechanistic interpretability  (v0.2)
-  loupe attribute <trace> [--backend mock|sae] [--explain] [--top-k 8]
-                                            Compute circuit attribution per llm-call step
-  loupe attribute --all [--force] [--explain]
-                                            Bulk attribute every captured trace
-  loupe cluster [--category hallucination]  Find SAE features that recur across failures
-
-Indexing & lifecycle
-  loupe index info                          DuckDB index health + row counts
-  loupe index rebuild                       Drop + re-walk JSONL files from disk
-  loupe purge --older-than 7d [--yes]       Delete old traces (dry-run unless --yes)
-
-Quality & integration
-  loupe verify <trace> | --all              Validate trace(s) against the canonical schema
-  loupe doctor [--smoke]                    Diagnose install + integrations; --smoke = full lifecycle
+  loupe attribute <trace> [--backend sae]   Circuit attribution per llm-call step
+  loupe cluster [--category …]              SAE features that recur across tagged failures
+  loupe steer <trace> --feature N           Replay with one feature dampened / amplified
+  loupe causal <trace> --corrupted … --answer …   Attribution patching (clean vs corrupted)
+  loupe export [--format loupebench|otlp|parquet]  LoupeBench JSONL / OTLP / Parquet
   loupe report <trace> [--html]             Shareable markdown / single-file HTML case file
-  loupe providers                           List all 49 auto-detected LLM provider hosts
+  loupe bench [<corpus>]                    Replay tagged failures against new code/models
+  loupe cost                                LLM spend across every captured trace
+  loupe replay <trace>                      Re-run a captured agent run
+
+Infrastructure
+  loupe doctor [--smoke] [--fix]            Diagnose + self-heal your install
+  loupe verify <trace> | --all              Validate trace(s) against the canonical schema
+  loupe purge --older-than 7d [--yes]       Delete old traces (dry-run unless --yes)
+  loupe index info | rebuild                DuckDB query-index health / rebuild
+  loupe config <get|set|list|path>          Edit ~/.loupe/config.toml without an editor
+  loupe providers                           Every LLM provider host the proxy auto-detects
+  loupe explain <topic>                     Built-in concept explainer (trace, autopatch, …)
   loupe version                             Print Loupe version
 ```
 
 ## 60-second quickstart
 
-```fish
+**Already have an agent project?** One command does everything — finds your
+agent, captures a real run, opens the dashboard:
+
+```bash
+cd your-agent-project
+loupe onboard
+```
+
+**Starting fresh?** Scaffold one and capture it:
+
+```bash
 # 1. Get a free Gemini key:  https://aistudio.google.com/apikey
-set -Ux GEMINI_API_KEY YOUR_KEY   # fish (persists across sessions)
+export GEMINI_API_KEY=YOUR_KEY     # bash / zsh
+# set -Ux GEMINI_API_KEY YOUR_KEY  # fish
+# $env:GEMINI_API_KEY='YOUR_KEY'   # PowerShell
 
-# 2. Scaffold a real agent project
-loupe init my-agent
+loupe init my-agent                # scaffold (also: --provider anthropic|openai)
 cd my-agent
-
-# 3. Run it — calls real Gemini, writes a real trace
-python agent.py "your question here"
-
-# 4. Open the dashboard in another terminal
-loupe ui
+python agent.py "your question here"   # real call, real trace
+loupe ui                           # dashboard auto-opens
 ```
 
 The browser opens at `http://localhost:7860`. You'll see the live SSE
-indicator pulsing green and one captured trace in the sidebar. Click it
-to inspect every step, the underlying HTTP request, and the model's
-response. Run the agent again — new traces stream in without a refresh.
+indicator pulsing green and your captured trace in the sidebar. Click it
+to inspect every step — the prompt the model saw, the reply it gave, token
+counts, the underlying HTTP call, and any error. Run the agent again —
+new traces stream in without a refresh.
 
 ## Circuit attribution — see *which* features fired
 
@@ -159,7 +190,27 @@ research workflow.
 
 ## Instrument your own agent — pick your stack
 
-Loupe works with **any LLM agent in any framework**. Three ways in, ranked by zero-config-ness:
+Loupe works with **any LLM agent in any framework**. Four ways in, ranked by zero-config-ness:
+
+### Option 0 — `loupe proxy`: zero code, any language *(new in 0.0.55)*
+
+Install Loupe. Run the proxy. Point your provider's base-URL env var at it.
+Every LLM call from any client in any language is captured — Python, Node,
+Go, Rust, even raw `curl`.
+
+```bash
+loupe proxy --provider anthropic --port 7878 &
+export ANTHROPIC_BASE_URL=http://127.0.0.1:7878
+
+python my_agent.py              # captured
+node  my-agent.js               # captured
+go run my-agent.go              # captured
+curl  http://127.0.0.1:7878/v1/messages -d '{...}'   # captured
+```
+
+Streaming SSE is forwarded chunk-by-chunk — first-token latency is unchanged.
+Run with no `--provider` to enable path-based auto-detection:
+`/v1/messages` → Anthropic, `/v1/chat/...` → OpenAI, `/v1beta/models/...` → Gemini.
 
 ### Option 1 — Universal HTTP capture (any Python LLM client)
 
@@ -227,6 +278,14 @@ patchFetch();                       // once, anywhere, at startup
 //   Vercel AI SDK, instructor.js, any custom OpenAI-spec client
 ```
 
+**Zero-code TypeScript** *(new in 0.0.56)* — same one-env-var pattern as Python:
+
+```bash
+export LOUPE_AUTOPATCH=1
+export NODE_OPTIONS="--require @loupe/sdk/autopatch"
+node my-agent.js          # captured automatically — no imports needed
+```
+
 ### Any other language — Go, Rust, Ruby, Java, curl, anything
 
 Loupe is **wire-format-first**. The dashboard accepts a `POST /api/traces` from any HTTP client. Run `loupe ui` and your Go/Rust/etc. agent just POSTs:
@@ -251,6 +310,19 @@ curl -X POST http://localhost:7860/api/traces \
 That's it — the trace shows up in the dashboard, SSE pushes it to anyone watching, and you can tag it for LoupeBench. The full schema (which fields are required, all the step `kind` values) lives in [`docs/SPEC.md`](docs/SPEC.md).
 
 Both Python and TS write the **same JSONL** to `~/.loupe/traces/` — and the HTTP endpoint writes the same format — so `loupe ui` shows everything side-by-side regardless of which language captured it.
+
+## Ship into your existing observability stack — OTLP export *(new in 0.0.56)*
+
+Captured traces convert to OpenTelemetry OTLP JSON with the **GenAI Semantic Conventions** (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, ...). POST the file to any OTLP/HTTP collector:
+
+```bash
+loupe export --format otlp --out loupe.json
+curl -X POST $COLLECTOR/v1/traces \
+     -H 'content-type: application/json' \
+     --data-binary @loupe.json
+```
+
+Works with Datadog APM, Honeycomb, Jaeger, Tempo, Grafana Cloud, New Relic, AWS X-Ray, or any self-hosted OTel collector.
 
 ## What's in the box
 

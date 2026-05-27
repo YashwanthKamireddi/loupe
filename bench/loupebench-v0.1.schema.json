@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loupe.dev/schemas/loupebench-v0.1.json",
+  "title": "LoupeBench corpus record (v0.1)",
+  "description": "A single annotated agent failure, self-contained and replayable. One JSON object per line of a JSONL file.",
+  "type": "object",
+  "required": ["id", "framework", "trace", "step", "annotation", "license"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable identifier within the corpus. Format: `lb-<trace_prefix>-<step_prefix>` for organically captured failures, or `lb-<category>-<NNN>` for hand-curated synthetic failures.",
+      "pattern": "^lb-[a-z0-9-]+$"
+    },
+    "framework": {
+      "type": "string",
+      "description": "Originating framework or provider label (e.g. anthropic, openai, langgraph, vercel-ai-sdk). May be null for synthetic records."
+    },
+    "trace": {
+      "type": "object",
+      "description": "Lightweight trace header so replays can be reproduced.",
+      "required": ["trace_id", "name", "started_at"],
+      "properties": {
+        "trace_id": {"type": "string"},
+        "name": {"type": "string"},
+        "started_at": {"type": "number"},
+        "ended_at": {"type": ["number", "null"]}
+      }
+    },
+    "step": {
+      "type": "object",
+      "description": "Full Loupe Step object (loupe-trace.schema.json shape) — the failing step.",
+      "required": ["step_id", "kind", "name", "started_at", "inputs"],
+      "properties": {
+        "step_id": {"type": "string"},
+        "kind": {"type": "string"},
+        "name": {"type": "string"},
+        "started_at": {"type": "number"},
+        "ended_at": {"type": ["number", "null"]},
+        "inputs":  {"type": "object"},
+        "outputs": {"type": "object"},
+        "metadata": {"type": "object"},
+        "error": {"type": ["string", "null"]}
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "description": "Why this step is in the corpus.",
+      "required": ["step_id", "failure_category"],
+      "properties": {
+        "step_id": {"type": "string"},
+        "failure_category": {
+          "type": "string",
+          "enum": ["hallucination", "loop", "tool-misuse", "off-task", "context-drop", "other"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "notes": {"type": "string"},
+        "mitigation": {"type": "string"},
+        "annotator": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX identifier — corpus is shareable under this license."
+    }
+  },
+  "additionalProperties": true
+}

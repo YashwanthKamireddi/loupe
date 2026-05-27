@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loupe"
-version = "0.0.54"
+version = "0.0.72"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,9 +27,18 @@ dependencies = [
     "anyio>=4.0.0",
     "rich>=13.0.0",
     "typer>=0.12.0",
+    # Universal HTTP capture (patches any httpx-based LLM client).
+    # Required so `pip install loupe` captures traces out of the box,
+    # without an `loupe[universal]` extra step.
+    "httpx>=0.27.0",
+    # Local forensic dashboard. Required so `loupe ui` works after a
+    # plain `pip install loupe`, no `loupe[ui]` extra step.
+    "fastapi>=0.110.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.optional-dependencies]
+# Framework SDKs — each is 10–20MB, users only need one. Kept opt-in.
 langgraph = ["langgraph>=0.2.0"]
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.50.0"]
@@ -38,10 +47,10 @@ llama-index = ["llama-index>=0.10.0"]
 dspy = ["dspy-ai>=2.4.0"]
 crewai = ["crewai>=0.30.0"]
 autogen = ["pyautogen>=0.2.0"]
-universal = ["httpx>=0.27.0"]   # patch ANY httpx-based LLM client
 openhands = ["openhands-ai>=0.10.0"]
+# Heavy interpretability stack (~150MB). Only needed for SAE attribution +
+# circuit steering; most users don't touch it. Kept opt-in.
 interp = ["transformer-lens>=2.0.0", "sae-lens>=4.0.0"]
-ui = ["fastapi>=0.110.0", "uvicorn>=0.30.0", "httpx>=0.27.0"]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

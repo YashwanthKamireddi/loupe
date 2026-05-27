@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from dataclasses import asdict
 from pathlib import Path
@@ -33,9 +34,11 @@ try:
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError as exc:  # pragma: no cover
+    # fastapi/uvicorn ship in core deps since v0.0.66 — this only fires
+    # in exotic environments (e.g. dependency-stripped containers).
     raise ImportError(
         "loupe ui requires fastapi + uvicorn. "
-        "Install with `pip install 'loupe[ui]'`."
+        "Reinstall with `pip install --upgrade loupe`."
     ) from exc
 
 from loupe.annotation import Annotation, AnnotationStore
@@ -81,6 +84,49 @@ def create_app() -> FastAPI:
 
     def ann_store() -> AnnotationStore:
         return AnnotationStore()
+
+    @app.get("/api/onboarding")
+    def onboarding() -> JSONResponse:
+        """Tell the dashboard which shell the user runs.
+
+        The dashboard's empty state shows a copy-paste env-var line. fish
+        wants ``set -Ux NAME VALUE``, bash/zsh want ``export NAME=VALUE``,
+        PowerShell wants ``$env:NAME='VALUE'``. We detect from $SHELL on
+        the server (the dashboard runs locally, so server == user shell).
+        Fallback to bash if we can't tell.
+        """
+        shell_path = os.environ.get("SHELL", "")
+        comspec = os.environ.get("COMSPEC", "")
+        lowered = shell_path.lower()
+        if "fish" in lowered:
+            shell = "fish"
+            export_template = "set -Ux {name} {value}"
+        elif (
+            "powershell" in lowered
+            or "pwsh" in lowered
+            or comspec.lower().endswith("powershell.exe")
+        ):
+            shell = "powershell"
+            export_template = "$env:{name}='{value}'"
+        elif "cmd" in lowered or comspec.lower().endswith("cmd.exe"):
+            shell = "cmd"
+            export_template = "set {name}={value}"
+        else:
+            # bash, zsh, sh, ksh, dash, busybox ash — all share `export`.
+            shell = "bash"
+            export_template = "export {name}={value}"
+        return JSONResponse(
+            {
+                "shell": shell,
+                "export_template": export_template,
+                # Pre-rendered convenience example using GEMINI (the default
+                # provider in loupe init). The dashboard substitutes the
+                # actual provider once the user picks one.
+                "example": export_template.format(
+                    name="GEMINI_API_KEY", value="YOUR_KEY",
+                ),
+            }
+        )
 
     @app.get("/api/stats")
     def stats() -> JSONResponse:
@@ -211,16 +257,9 @@ def create_app() -> FastAPI:
         if path is None:
             raise HTTPException(status_code=404, detail="trace not found")
 
-        header: dict[str, Any] = {}
-        steps: list[dict[str, Any]] = []
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                obj = json.loads(line)
-                kind = obj.pop("_type", None)
-                if kind == "trace":
-                    header = obj
-                elif kind == "step":
-                    steps.append(obj)
+        from loupe.store import load_trace_split
+        header, steps, _ = load_trace_split(path)
+        header = header or {}
         header["steps"] = steps
         header["annotations"] = [asdict(a) for a in ann_store().load(header["trace_id"])]
         return JSONResponse(header)
@@ -257,6 +296,130 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="trace not found")
         removed = ann_store().remove(path.stem, step_id)
         return JSONResponse({"removed": removed})
+
+    @app.get("/api/cost-timeseries")
+    def cost_timeseries(days: int = 14) -> JSONResponse:
+        """Daily aggregated cost + activity for the last ``days`` days.
+
+        Returns ``{"days": [{"date": "YYYY-MM-DD", "usd": …, "calls": …,
+        "rate_limited": …}, …]}`` in chronological order. Missing days are
+        zero-filled so the chart renders a clean continuous line.
+
+        Costs use the published pricing table in :mod:`loupe.pricing`; any
+        step whose model isn't priced is counted toward ``calls`` but not
+        ``usd``.
+        """
+        import datetime as _dt
+        from collections import defaultdict
+
+        from loupe.pricing import estimate_cost_usd
+
+        # Clamp the window so a misbehaving client can't ask for years.
+        n = max(1, min(int(days), 90))
+        today = _dt.date.today()
+        start = today - _dt.timedelta(days=n - 1)
+
+        by_day_usd: dict[str, float] = defaultdict(float)
+        by_day_calls: dict[str, int] = defaultdict(int)
+        by_day_rl: dict[str, int] = defaultdict(int)
+
+        d = traces_dir()
+        if d.exists():
+            from loupe.store import load_trace_split
+            for path in d.glob("*.jsonl"):
+                try:
+                    header, steps, _ = load_trace_split(path)
+                except OSError:
+                    continue
+                if header is None:
+                    continue
+                started = header.get("started_at")
+                if not isinstance(started, (int, float)):
+                    continue
+                day = _dt.datetime.fromtimestamp(started).date()
+                if day < start or day > today:
+                    continue
+                day_key = day.isoformat()
+                for step in steps:
+                    if step.get("kind") != "llm-call":
+                        continue
+                    by_day_calls[day_key] += 1
+                    outputs = step.get("outputs") or {}
+                    if outputs.get("rate_limited") or outputs.get("status") == 429:
+                        by_day_rl[day_key] += 1
+                    inputs = step.get("inputs") or {}
+                    model = inputs.get("model") or step.get("name", "").split(":", 1)[-1]
+                    in_tok = outputs.get("input_tokens")
+                    out_tok = outputs.get("output_tokens")
+                    priced = (
+                        isinstance(model, str)
+                        and isinstance(in_tok, int)
+                        and isinstance(out_tok, int)
+                    )
+                    if priced:
+                        usd = estimate_cost_usd(in_tok, out_tok, model=model)
+                        if usd is not None:
+                            by_day_usd[day_key] += usd
+
+        days_out: list[dict[str, Any]] = []
+        for i in range(n):
+            day_iso = (start + _dt.timedelta(days=i)).isoformat()
+            days_out.append({
+                "date": day_iso,
+                "usd": round(by_day_usd.get(day_iso, 0.0), 6),
+                "calls": by_day_calls.get(day_iso, 0),
+                "rate_limited": by_day_rl.get(day_iso, 0),
+            })
+        return JSONResponse({"days": days_out})
+
+    @app.post("/api/traces/bulk-delete")
+    async def bulk_delete(request: Request) -> JSONResponse:
+        """Delete a batch of traces by id. Body: ``{"trace_ids": [...]}``.
+
+        Each id is treated as a prefix (matching the rest of the dashboard
+        + CLI). Annotations are deleted alongside their trace. Best-effort:
+        a missing trace_id contributes to ``not_found`` rather than failing
+        the whole batch.
+        """
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
+        ids = payload.get("trace_ids") if isinstance(payload, dict) else None
+        if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+            raise HTTPException(
+                status_code=422,
+                detail="trace_ids must be an array of strings",
+            )
+        # Cap the per-request size so a misbehaving client can't ask us to
+        # walk the whole disk in one shot.
+        if len(ids) > 500:
+            raise HTTPException(
+                status_code=413,
+                detail="trace_ids: at most 500 per request",
+            )
+        deleted: list[str] = []
+        not_found: list[str] = []
+        for raw in ids:
+            tid = raw.strip()
+            if not tid:
+                not_found.append(raw)
+                continue
+            path = _find_trace(traces_dir(), tid)
+            if path is None:
+                not_found.append(tid)
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                not_found.append(tid)
+                continue
+            deleted.append(path.stem)
+            # Best-effort: drop the annotation file too if it exists.
+            import contextlib as _ctx
+            with _ctx.suppress(Exception):
+                ann_store().clear(path.stem)
+        return JSONResponse({"deleted": deleted, "not_found": not_found})
 
     @app.get("/api/traces/{trace_id}/report")
     def trace_report(trace_id: str) -> PlainTextResponse:
@@ -364,12 +527,6 @@ def _find_trace(traces_dir: Path, trace_id: str) -> Path | None:
 
 
 def _read_header(path: Path) -> dict[str, Any] | None:
-    try:
-        with path.open(encoding="utf-8") as f:
-            first = json.loads(next(f))
-        if first.get("_type") != "trace":
-            return None
-        first.pop("_type", None)
-        return first
-    except (StopIteration, json.JSONDecodeError):
-        return None
+    """Thin shim over ``loupe.store.read_trace_header``."""
+    from loupe.store import read_trace_header
+    return read_trace_header(path)

@@ -36,7 +36,6 @@ Public surface
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -280,11 +279,39 @@ class SAEAttributor:
 
     name = "sae"
 
-    # Reasonable defaults so `loupe attribute --backend sae` works
-    # immediately on first install without further config.
+    # Kept for backwards compatibility with code that imported these
+    # constants directly. New callers should use `loupe._sae_registry`.
     DEFAULT_MODEL = "gpt2-small"
     DEFAULT_RELEASE = "gpt2-small-res-jb"
     DEFAULT_SAE = "blocks.6.hook_resid_pre"
+
+    @classmethod
+    def from_registry(
+        cls,
+        captured_model: str | None = None,
+        *,
+        top_k: int = 16,
+        device: str = "cpu",
+        max_tokens: int = 256,
+    ) -> SAEAttributor:
+        """Pick the best SAE entry for a captured model and construct one.
+
+        Wraps :func:`loupe._sae_registry.recommended_sae_for` so call
+        sites stay one-liners. Example::
+
+            attr = SAEAttributor.from_registry("claude-haiku-4-5")
+            # → uses gpt2-small as the surrogate
+        """
+        from loupe._sae_registry import recommended_sae_for
+        entry = recommended_sae_for(captured_model)
+        return cls(
+            model=entry.model,
+            sae=entry.sae_id,
+            release=entry.release,
+            top_k=top_k,
+            device=device,
+            max_tokens=max_tokens,
+        )
 
     def __init__(
         self,
@@ -474,40 +501,31 @@ def attribute_trace(
     decides what to do with them — typically persist into the annotation
     store via :func:`persist_attribution` below.
     """
+    from loupe.store import load_trace_split
+
     results: list[tuple[str, AttributionResult]] = []
-    header: dict[str, Any] | None = None
-    with trace_path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            kind = obj.pop("_type", None)
-            if kind == "trace":
-                header = obj
-                continue
-            if kind != "step":
-                continue
-            if obj.get("kind") != "llm-call":
-                continue
-            if only_failing and not obj.get("error"):
-                continue
+    header, steps, _ = load_trace_split(trace_path)
+    for obj in steps:
+        if obj.get("kind") != "llm-call":
+            continue
+        if only_failing and not obj.get("error"):
+            continue
 
-            prompt = _extract_prompt(obj.get("inputs") or {})
-            response = _extract_response(obj.get("outputs") or {})
-            # Skip steps we can't reconstruct prompts/responses for — they'd
-            # produce noise in the attribution.
-            if not prompt and not response:
-                continue
+        prompt = _extract_prompt(obj.get("inputs") or {})
+        response = _extract_response(obj.get("outputs") or {})
+        # Skip steps we can't reconstruct prompts/responses for — they'd
+        # produce noise in the attribution.
+        if not prompt and not response:
+            continue
 
-            trace_id = (header or {}).get("trace_id", trace_path.stem)
-            result = attributor.attribute(
-                prompt=prompt,
-                response=response,
-                step_id=str(obj.get("step_id", "")),
-                trace_id=str(trace_id),
-            )
-            results.append((str(obj["step_id"]), result))
+        trace_id = (header or {}).get("trace_id", trace_path.stem)
+        result = attributor.attribute(
+            prompt=prompt,
+            response=response,
+            step_id=str(obj.get("step_id", "")),
+            trace_id=str(trace_id),
+        )
+        results.append((str(obj["step_id"]), result))
     return results
 
 

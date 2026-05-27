@@ -25,6 +25,43 @@ export function currentTrace(): Trace | undefined {
   return _als.getStore();
 }
 
+/**
+ * Internal: run `fn` inside an implicit one-call trace context.
+ *
+ * Used by the autopatch path in `universal.ts` so a fetch call made
+ * OUTSIDE any user-defined `@trace` block still produces a single-step
+ * trace on disk. Mirrors `loupe.integrations.httpx._implicit_trace_context`
+ * in the Python SDK.
+ *
+ * Marked underscore-prefixed because it is a stability-sensitive
+ * internal — public callers should keep using `trace(...)`.
+ */
+export async function _runImplicitTrace<T>(
+  options: { name?: string; framework?: string },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const t: Trace = {
+    trace_id: randomUUID().replace(/-/g, ""),
+    name: options.name ?? "auto",
+    framework: options.framework ?? "autopatch",
+    started_at: Date.now() / 1000,
+    ended_at: null,
+    steps: [],
+    metadata: {},
+  };
+  const store = defaultStore();
+  try {
+    return await _als.run(t, fn);
+  } catch (err) {
+    t.metadata.failed = true;
+    t.metadata.error = formatError(err);
+    throw err;
+  } finally {
+    t.ended_at = Date.now() / 1000;
+    await store.save(t);
+  }
+}
+
 export function recordStep(
   kind: StepKind,
   name: string,

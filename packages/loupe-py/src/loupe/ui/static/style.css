@@ -10,43 +10,46 @@
    ========================================================================= */
 
 :root {
-  /* Palette */
-  --bg-base: #0c0b09;
+  /* Palette — single dark theme. */
+  --bg-base:    #0c0b09;
   --bg-surface: #15130f;
-  --bg-raised: #1d1a14;
-  --bg-hover: #25211a;
-  --bg-input: #0a0907;
+  --bg-raised:  #1d1a14;
+  --bg-hover:   #25211a;
+  --bg-input:   #0a0907;
 
-  --ink: #f5f0e3;
+  --ink:   #f5f0e3;
   --ink-2: #cabfa9;
   --ink-3: #8c8472;
   --ink-4: #5b5547;
+  --ink-5: #423d33;
 
-  --border: #2e2a22;
-  --border-mid: #423d33;
+  --border:        #2e2a22;
+  --border-mid:    #423d33;
   --border-strong: #5a5346;
 
-  --amber: #e0a458;
-  --amber-soft: #f0c080;
-  --amber-bg: rgba(224, 164, 88, 0.10);
+  --amber:        #e0a458;
+  --amber-soft:   #f0c080;
+  --amber-bg:     rgba(224, 164, 88, 0.10);
   --amber-border: rgba(224, 164, 88, 0.34);
 
-  --red: #e25a47;
-  --red-bg: rgba(226, 90, 71, 0.10);
+  --red:        #e25a47;
+  --red-bg:     rgba(226, 90, 71, 0.10);
   --red-border: rgba(226, 90, 71, 0.36);
 
-  --green: #7ea96b;
-  --blue: #7cb4d4;
+  --green:  #7ea96b;
+  --blue:   #7cb4d4;
   --purple: #b193cb;
 
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.35);
+
   /* Type scale */
-  --t-xs: 11px;
-  --t-sm: 12.5px;
+  --t-xs:   11px;
+  --t-sm:   12.5px;
   --t-base: 14px;
-  --t-md: 15px;
-  --t-lg: 17px;
-  --t-xl: 22px;
-  --t-2xl: 28px;
+  --t-md:   15px;
+  --t-lg:   17px;
+  --t-xl:   22px;
+  --t-2xl:  28px;
 
   /* Spacing scale */
   --s-1: 4px;
@@ -58,10 +61,9 @@
   --s-8: 32px;
   --s-10: 40px;
 
-  --radius: 6px;
+  --radius:    6px;
   --radius-sm: 4px;
-
-  --topbar-h: 60px;
+  --topbar-h:  60px;
 }
 
 * {
@@ -87,6 +89,11 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+  /* Never allow horizontal scroll / content "scrub-off" on narrow
+     viewports — children that exceed the width wrap or scroll inside
+     their own panes instead of pushing the whole page sideways. */
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 /* Scrollbar — quietly dark, never bright */
@@ -295,6 +302,9 @@ input, select, textarea {
 .sidebar-foot {
   padding: var(--s-2) var(--s-3);
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
 }
 .sidebar-foot .btn-ghost {
   width: 100%;
@@ -306,6 +316,7 @@ input, select, textarea {
   padding: 7px 10px;
 }
 .sidebar-foot .btn-ghost span { color: var(--amber); font-weight: 700; }
+
 .search input {
   width: 100%;
   background: var(--bg-input);
@@ -332,12 +343,245 @@ input, select, textarea {
   cursor: pointer;
   transition: background 0.1s ease, border-color 0.1s ease;
   display: grid;
-  gap: 6px;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 6px var(--s-3);
 }
 .trace-list li:hover { background: var(--bg-hover); }
 .trace-list li.active {
   background: var(--bg-raised);
   border-left-color: var(--amber);
+}
+.trace-list li.selected {
+  background: var(--bg-raised);
+}
+
+.trace-list .t-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--ink-4);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  margin-top: 3px;
+  transition: background 0.1s ease, border-color 0.1s ease;
+  position: relative;
+}
+.trace-list .t-select:hover { border-color: var(--ink-3); }
+.trace-list .t-select:checked {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+.trace-list .t-select:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--bg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.trace-list .t-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 14-day spend sparkline — sits above the trace list when there's
+   activity. Hidden by default so a brand-new install isn't cluttered. */
+.cost-sparkline {
+  padding: var(--s-3) var(--s-5) var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+.cost-sparkline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: var(--t-xs);
+  color: var(--ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.cost-sparkline-label { font-weight: 500; }
+.cost-sparkline-total {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.cost-sparkline-svg {
+  width: 100%;
+  height: 36px;
+  display: block;
+}
+/* Bar fills via CSS (var() resolves here; it does NOT resolve in an SVG
+   fill="" attribute). */
+.cost-sparkline-svg .spark-bar       { fill: var(--amber); opacity: 0.85; }
+.cost-sparkline-svg .spark-bar-rl    { fill: var(--red);   opacity: 0.9; }
+.cost-sparkline-svg .spark-bar-empty { fill: var(--ink-5); opacity: 0.3; }
+.cost-sparkline-svg rect:hover {
+  opacity: 1;
+}
+
+/* G3 — multi-trace side-by-side diff view.
+   Header row: trace name/framework/id per column.
+   Rows: one per step index. Cells across the row share alignment when
+   their (kind, name) match; divergent ones get an amber edge. */
+.diff-view {
+  padding: var(--s-4) var(--s-5);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.diff-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--border);
+}
+.diff-title {
+  font-size: var(--t-lg);
+  font-weight: 500;
+  color: var(--ink);
+}
+.diff-cols-head, .diff-row {
+  display: grid;
+  gap: var(--s-3);
+  align-items: stretch;
+}
+.diff-cols-head {
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--border);
+}
+.diff-col-head { display: flex; flex-direction: column; gap: 4px; }
+.diff-col-name {
+  font-size: var(--t-md);
+  font-weight: 500;
+  color: var(--ink);
+  word-break: break-word;
+}
+.diff-col-meta {
+  display: flex; gap: var(--s-2); align-items: center;
+  font-size: var(--t-xs);
+  color: var(--ink-3);
+}
+.diff-col-id {
+  font-size: 10px;
+  color: var(--ink-4);
+  font-family: "JetBrains Mono", monospace;
+}
+.diff-rows {
+  flex: 1;
+  overflow-y: auto;
+  padding-top: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.diff-row {
+  padding: 8px 0;
+}
+.diff-row-num {
+  color: var(--ink-4);
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--t-xs);
+  text-align: right;
+  padding-right: 6px;
+  padding-top: 4px;
+}
+.diff-cell {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.diff-cell-empty {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--ink-4);
+  align-items: center;
+  justify-content: center;
+}
+.diff-cell-divergent {
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+}
+.diff-cell-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+.diff-cell-err { color: var(--red); font-weight: 700; }
+.diff-cell-name {
+  font-size: var(--t-sm);
+  color: var(--ink);
+  word-break: break-word;
+}
+.diff-cell-meta {
+  font-size: var(--t-xs);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Floating bulk-action bar — appears at the bottom when ≥1 trace is selected */
+.bulk-bar {
+  position: fixed;
+  bottom: var(--s-5);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+  font-size: var(--t-sm);
+}
+.bulk-bar .bulk-count {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  padding-right: var(--s-2);
+  border-right: 1px solid var(--border);
+}
+.bulk-bar .bulk-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--ink);
+  padding: 4px 10px;
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.bulk-bar .bulk-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--ink-4);
+}
+.bulk-bar .bulk-btn.danger {
+  color: var(--red);
+  border-color: rgba(255, 90, 90, 0.35);
+}
+.bulk-bar .bulk-btn.danger:hover {
+  background: rgba(255, 90, 90, 0.08);
+  border-color: var(--red);
 }
 
 .trace-list .t-name {
@@ -446,6 +690,80 @@ input, select, textarea {
   color: var(--ink-2);
   font-size: var(--t-md);
   margin-bottom: var(--s-4);
+}
+/* Vocabulary block — defines trace/step/evidence/annotation BEFORE the
+   3-step quickstart so a newcomer reading top-to-bottom knows what
+   they're about to capture. */
+.empty-concept {
+  margin-bottom: var(--s-5);
+  padding: var(--s-4) var(--s-5);
+  border-left: 2px solid var(--amber);
+  background: rgba(224, 164, 88, 0.04);
+}
+.empty-concept-title {
+  color: var(--amber);
+  font-size: var(--t-sm);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 var(--s-2) 0;
+}
+.empty-concept-body {
+  color: var(--ink-2);
+  font-size: var(--t-md);
+  line-height: 1.55;
+  margin: 0;
+}
+.empty-concept-body strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+/* First-trace one-shot hint — appears the very first time a user has
+   exactly one trace and hasn't dismissed it. Lives at the top of the
+   viewer pane; auto-hides after 10s or on close-button click. */
+.first-trace-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  margin: var(--s-4) auto;
+  max-width: 720px;
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  font-size: var(--t-md);
+  line-height: 1.5;
+  animation: first-trace-fade-in 0.4s ease-out;
+}
+.first-trace-mark {
+  color: var(--amber);
+  flex-shrink: 0;
+  font-size: var(--t-lg);
+  line-height: 1;
+}
+.first-trace-text {
+  flex: 1;
+}
+.first-trace-text strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.first-trace-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink-dim);
+  cursor: pointer;
+  font-size: var(--t-lg);
+  line-height: 1;
+  padding: 0 var(--s-1);
+}
+.first-trace-close:hover {
+  color: var(--ink);
+}
+@keyframes first-trace-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .empty-steps {
   list-style: none;
@@ -606,102 +924,6 @@ input, select, textarea {
   .skeleton-row { animation: none; }
 }
 
-/* =========================================================================
-   First-visit guided tour
-   =========================================================================
-   Sentry-/Linear-style spotlight + side card. Designed to teach the user
-   the dashboard in 5 steps without ever blocking the underlying UI:
-   - Tour overlay is a dimmed full-screen layer.
-   - The .tour-spot is a hollow rectangle that "punches out" the dim layer
-     around the targeted element using box-shadow (no SVG/canvas needed).
-   - The .tour-card floats next to the spot, repositioned by the JS
-     controller as the tour advances.
-   ========================================================================= */
-
-.tour-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 180ms ease-out;
-}
-.tour-backdrop[aria-hidden="false"] {
-  pointer-events: auto;
-  opacity: 1;
-}
-/* The spot: the small box-shadow trick — a transparent rectangle with a
-   huge spread shadow that dims everything OUTSIDE it. */
-.tour-spot {
-  position: absolute;
-  border-radius: 8px;
-  box-shadow: 0 0 0 9999px rgba(12, 11, 9, 0.78);
-  border: 1.5px solid var(--amber);
-  transition: top 220ms ease-out, left 220ms ease-out,
-              width 220ms ease-out, height 220ms ease-out;
-  pointer-events: none;
-}
-.tour-card {
-  position: absolute;
-  width: 360px;
-  max-width: calc(100vw - 48px);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-mid);
-  border-radius: var(--radius);
-  padding: var(--s-5) var(--s-5) var(--s-4);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
-  transition: top 220ms ease-out, left 220ms ease-out;
-}
-.tour-title {
-  font-family: "EB Garamond", "Iowan Old Style", Georgia, serif;
-  font-style: italic;
-  font-size: 22px;
-  font-weight: 400;
-  color: var(--ink);
-  margin: var(--s-2) 0 var(--s-2);
-  letter-spacing: -0.01em;
-}
-.tour-body {
-  font-size: var(--t-base);
-  line-height: 1.55;
-  color: var(--ink-2);
-}
-.tour-progress {
-  display: flex;
-  gap: 4px;
-}
-.tour-progress span {
-  display: block;
-  height: 3px;
-  flex: 1;
-  background: var(--border);
-  border-radius: 2px;
-  transition: background 200ms;
-}
-.tour-progress span.is-done {
-  background: var(--amber-soft);
-}
-.tour-progress span.is-active {
-  background: var(--amber);
-}
-.tour-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  margin-top: var(--s-4);
-}
-.tour-step-label {
-  flex: 1;
-  font-size: var(--t-xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-4);
-}
-@media (prefers-reduced-motion: reduce) {
-  .tour-backdrop,
-  .tour-spot,
-  .tour-card { transition: none; }
-}
 
 /* Inline ? icons next to technical terms — click for a one-paragraph
    plain-English popover. Kept minimal so it doesn't compete with the
@@ -1060,6 +1282,153 @@ input, select, textarea {
   line-height: 1.55;
 }
 
+/* G6 — copy-on-click button overlay on every <pre>. Hidden until hover
+   to keep the visual focus on the code itself. */
+.detail pre { position: relative; }
+.pre-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  appearance: none;
+  background: var(--bg-input);
+  border: 1px solid var(--border-mid);
+  color: var(--ink-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  font-family: inherit;
+}
+.detail pre:hover .pre-copy-btn,
+.pre-copy-btn:focus-visible {
+  opacity: 1;
+}
+.pre-copy-btn:hover { color: var(--amber); border-color: var(--amber-border); }
+
+.detail-head { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+
+/* G6 — collapsible JSON sections. Default closed; the summary acts as
+   the section header in the same visual style as `.section-h`. */
+.json-fold {
+  margin: 0;
+  padding: 0;
+}
+.json-fold > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.json-fold > summary::-webkit-details-marker { display: none; }
+.json-fold > summary::before {
+  content: "▸";
+  display: inline-block;
+  color: var(--ink-4);
+  transition: transform 0.12s ease;
+  font-size: 9px;
+}
+.json-fold[open] > summary::before { transform: rotate(90deg); }
+.json-fold[open] > summary { margin-bottom: var(--s-3); }
+.json-fold > pre { margin-top: 0; }
+
+/* G2 — Conversation bubbles. Each role gets its own subtle color so the
+   reader's eye can follow the flow without rereading labels every turn. */
+.convo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.bubble {
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+}
+.bubble-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ink-3);
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bubble-body {
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Role tinting — flat colors borrowed from the existing pill palette. */
+.bubble-user {
+  border-color: var(--border-mid);
+  background: var(--bg-raised);
+}
+.bubble-user .bubble-role { color: var(--ink-2); }
+
+.bubble-assistant {
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+}
+.bubble-assistant .bubble-role { color: var(--amber); }
+
+.bubble-system {
+  border-color: var(--border);
+  background: var(--bg-input);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: var(--t-xs);
+  color: var(--ink-3);
+}
+.bubble-system .bubble-role { color: var(--ink-3); }
+
+.bubble-tool {
+  border-color: var(--border);
+  background: var(--bg-input);
+  color: var(--blue);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: var(--t-xs);
+}
+.bubble-tool .bubble-role { color: var(--blue); }
+
+/* "This was the actual reply" mark — a tiny amber dot after the role
+   label on the assistant bubble that came from outputs.text. */
+.bubble-reply-mark {
+  display: inline-block;
+  width: 6px; height: 6px;
+  background: var(--amber);
+  border-radius: 50%;
+}
+
+/* Tool call sub-blocks inside an assistant bubble. */
+.bubble-tools {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bubble-tools .bubble-tool {
+  padding: 6px 10px;
+  border: 1px dashed var(--border-mid);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  word-break: break-all;
+}
+.bubble-tools .bt-name { color: var(--blue); }
+.bubble-tools .bt-args { color: var(--ink-2); }
+
 .error-banner {
   display: flex;
   gap: 10px;
@@ -1387,79 +1756,66 @@ input, select, textarea {
 }
 
 /* =========================================================================
-   Modal (keyboard help)
-   ========================================================================= */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(8, 7, 5, 0.75);
-  backdrop-filter: blur(4px);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--s-6);
-}
-.modal-backdrop[hidden] { display: none; }
-.modal {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-mid);
-  border-radius: var(--radius);
-  padding: var(--s-6);
-  max-width: 460px;
-  width: 100%;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
-}
-.modal-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--s-5);
-}
-.modal-head h2 {
-  font-size: var(--t-md);
-  font-weight: 600;
-  color: var(--ink);
-  letter-spacing: -0.005em;
-}
-.kbd-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 6px;
-}
-.kbd-table td {
-  padding: 7px 0;
-  vertical-align: middle;
-  font-size: var(--t-sm);
-  color: var(--ink-2);
-}
-.kbd-table td:first-child {
-  width: 130px;
-  white-space: nowrap;
-}
-kbd {
-  display: inline-block;
-  background: var(--bg-input);
-  border: 1px solid var(--border-mid);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--ink);
-  font-weight: 500;
-  min-width: 16px;
-  text-align: center;
-}
-
-/* =========================================================================
    Responsive — collapse panes on narrow viewports.
    ========================================================================= */
 @media (max-width: 900px) {
-  .topbar { grid-template-columns: 1fr; height: auto; padding: var(--s-3); gap: var(--s-2); }
-  .stats, .meta { justify-content: flex-start; text-align: left; }
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { max-height: 240px; }
+  .topbar {
+    grid-template-columns: 1fr;
+    height: auto;
+    padding: var(--s-3);
+    gap: var(--s-2);
+  }
+  /* Stats + meta pills wrap onto multiple rows instead of overflowing. */
+  .stats, .meta {
+    justify-content: flex-start;
+    text-align: left;
+    flex-wrap: wrap;
+  }
+  .layout {
+    grid-template-columns: 1fr;
+    /* Stack sidebar above viewer and let the whole page scroll
+       vertically rather than trapping content in fixed-height panes. */
+    grid-auto-rows: min-content;
+    height: auto;
+    overflow: visible;
+  }
+  .sidebar { max-height: 320px; }
   .panes { grid-template-columns: 1fr; }
   .pane-steps { max-height: 240px; }
+}
+
+/* G7 — Smaller phones. Trim padding + chrome so the trace list takes
+   the full column. Touch targets are sized 36px+ to meet WCAG 2.5.5. */
+@media (max-width: 640px) {
+  :root { --topbar-h: auto; }
+  .brand-sub { display: none; }
+  .live-indicator { display: none; }
+  /* Sidebar gets a touch more height since it's now the primary viewport
+     on small screens. */
+  .sidebar { max-height: 360px; }
+  .trace-list li {
+    grid-template-columns: auto 1fr;
+    padding: var(--s-3) var(--s-4);
+  }
+  .trace-list .t-status { display: none; }
+  .trace-list .t-select {
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+  }
+  /* Larger tap targets for buttons in the bulk action bar */
+  .bulk-bar .bulk-btn { padding: 8px 14px; }
+  .bulk-bar {
+    left: var(--s-3);
+    right: var(--s-3);
+    bottom: var(--s-3);
+    transform: none;
+  }
+  /* Diff view: collapse to scrollable single-column on phones */
+  .diff-cols-head, .diff-row {
+    overflow-x: auto;
+  }
+  /* Timeline cards scroll horizontally inside their strip rather than
+     widening the page. */
+  .timeline, .timeline-wrap { overflow-x: auto; }
 }

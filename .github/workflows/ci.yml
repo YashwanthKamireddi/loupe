@@ -32,7 +32,7 @@ jobs:
           pip install -e '.[dev,ui,langgraph]'
 
       - name: lint
-        run: python -m ruff check src/ tests/ examples/
+        run: python -m ruff check src/ tests/
 
       - name: type-check
         run: python -m mypy --ignore-missing-imports src/loupe/
@@ -89,10 +89,23 @@ jobs:
           cd packages/loupe-ts && npm install && cd ../..
 
       - name: capture from Python
-        run: cd packages/loupe-py && python examples/hello_loupe.py || true
+        run: |
+          python -c "
+          from loupe import trace, record_step
+          @trace(framework='ci-py')
+          def run():
+              record_step(kind='thought', name='ping', inputs={}, outputs={'ok': True})
+          run()
+          "
 
       - name: capture from TypeScript
-        run: cd packages/loupe-ts && npm run example:hello || true
+        run: |
+          cd packages/loupe-ts && npx tsx -e "
+          import { trace, recordStep } from './src/index';
+          await trace({ framework: 'ci-ts' }, async () => {
+            recordStep({ kind: 'thought', name: 'ping', inputs: {}, outputs: { ok: true } });
+          });
+          "
 
       - name: assert both traces in shared ~/.loupe
         run: |
@@ -105,7 +118,7 @@ jobs:
                   h = json.loads(next(fh))
               frameworks.add(h.get('framework'))
           print('frameworks:', frameworks)
-          assert 'demo' in frameworks, 'python trace missing'
-          assert 'demo-ts' in frameworks, 'typescript trace missing'
+          assert 'ci-py' in frameworks, 'python trace missing'
+          assert 'ci-ts' in frameworks, 'typescript trace missing'
           print('cross-language wire format verified.')
           "

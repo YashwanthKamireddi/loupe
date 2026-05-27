@@ -1,5 +1,6 @@
 """Parity test: the custom `loupe.ingest.ingest` validator MUST agree with
-the canonical JSON Schema at docs/loupe-trace.schema.json on every payload.
+the canonical JSON Schema shipped at `loupe/_data/loupe-trace.schema.json`
+on every payload.
 
 If they ever disagree, the schema (which is part of the public spec) is
 wrong, the validator (which is what actually runs in production) is wrong,
@@ -16,11 +17,11 @@ import pytest
 
 jsonschema = pytest.importorskip("jsonschema")
 
+import loupe  # noqa: E402
 from loupe.ingest import IngestError, ingest  # noqa: E402
 from loupe.store import JSONLStore  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SCHEMA_PATH = REPO_ROOT / "docs" / "loupe-trace.schema.json"
+SCHEMA_PATH = Path(loupe.__file__).parent / "_data" / "loupe-trace.schema.json"
 
 
 @pytest.fixture(scope="module")

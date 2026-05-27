@@ -39,17 +39,9 @@ def render_trace_html(trace_path: Path) -> str:
 
 
 def _read_trace(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    header: dict[str, Any] = {}
-    steps: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            obj = _json.loads(line)
-            kind = obj.pop("_type", None)
-            if kind == "trace":
-                header = obj
-            elif kind == "step":
-                steps.append(obj)
-    return header, steps
+    from loupe.store import load_trace_split
+    header, steps, _ = load_trace_split(path)
+    return header or {}, steps
 
 
 _SHELL = r"""<!DOCTYPE html>

@@ -1,6 +1,6 @@
 {
   "name": "@loupe/sdk",
-  "version": "0.0.19",
+  "version": "0.0.72",
   "description": "A magnifying glass for your AI agent — TypeScript SDK.",
   "license": "MIT",
   "author": "Yashwanth Kamireddi",
@@ -39,6 +39,11 @@
       "import": "./dist/integrations/universal.js",
       "require": "./dist/integrations/universal.cjs"
     },
+    "./autopatch": {
+      "types": "./dist/autopatch.d.ts",
+      "import": "./dist/autopatch.js",
+      "require": "./dist/autopatch.cjs"
+    },
     "./integrations": {
       "types": "./dist/integrations/index.d.ts",
       "import": "./dist/integrations/index.js",
@@ -64,8 +69,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'no linter yet (relying on tsc + tests)'",
-    "example:hello": "tsx examples/hello.ts"
+    "lint": "echo 'no linter yet (relying on tsc + tests)'"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -64,10 +64,41 @@ def patch() -> bool:
 
 
 def _autopatch_enabled() -> bool:
-    """``LOUPE_AUTOPATCH=1`` makes the wrapper auto-create an implicit
-    one-call trace when no @trace context is active — the zero-code path.
+    """Decide whether the wrapper should auto-create an implicit
+    one-call trace when no @trace context is active.
+
+    Resolution order (first match wins):
+
+      1. ``LOUPE_AUTOPATCH=0`` / ``false`` / ``no`` / ``off`` → OFF
+         (explicit opt-out; always honored)
+      2. ``LOUPE_AUTOPATCH=1`` / ``true`` / ``yes`` / ``on``  → ON
+         (explicit opt-in; useful before ``loupe setup`` has run)
+      3. Env var unset:
+           - If ``~/.loupe/config.toml`` exists → ON (user ran setup;
+             they want capture)
+           - Otherwise → OFF (probably a transitive install; don't
+             surprise people)
+
+    This rule keeps the install path frictionless — ``pip install loupe
+    && loupe setup`` and every LLM call from any Python script captures
+    automatically — while staying safe for libraries that depend on
+    Loupe but don't expect it to be active.
     """
-    return os.environ.get("LOUPE_AUTOPATCH") in ("1", "true", "yes", "on")
+    raw = os.environ.get("LOUPE_AUTOPATCH")
+    if raw is not None:
+        norm = raw.strip().lower()
+        if norm in ("1", "true", "yes", "on"):
+            return True
+        if norm in ("0", "false", "no", "off", ""):
+            return False
+        # Unknown value → treat as opt-out (safer default)
+        return False
+    # Env var unset → defer to whether the user has set up Loupe.
+    try:
+        from loupe.config import config_path
+        return config_path().exists()
+    except Exception:
+        return False
 
 
 @contextlib.contextmanager
@@ -81,10 +112,27 @@ def _implicit_trace_context() -> Any:
     """
     # Lazy imports so the universal-httpx module stays cheap when nobody
     # uses autopatch mode.
+    import sys
+    from pathlib import Path
+
     from loupe.store import default_store
     from loupe.trace import _begin_trace, _current_trace, _finish_trace
 
-    t = _begin_trace("autopatch", "auto")
+    # Name the implicit trace after the script that triggered it so
+    # `loupe list` distinguishes captures across many invocations.
+    # Falls back to "auto" if argv[0] isn't a useful filename (REPL,
+    # `python -c`, embedded interpreter).
+    script_name = "auto"
+    try:
+        if sys.argv and sys.argv[0] and sys.argv[0] not in ("-c", "-"):
+            stem = Path(sys.argv[0]).stem
+            if stem and stem not in ("python", "python3"):
+                script_name = stem
+    except Exception:  # noqa: BLE001 — best-effort naming, never break capture
+        pass
+    # name = what was captured, framework = how. TS side uses the same
+    # convention so cross-language traces feel coherent in the dashboard.
+    t = _begin_trace(script_name, "autopatch")
     token = _current_trace.set(t)
     try:
         yield
@@ -257,28 +305,63 @@ def _emit(
     if t is None:
         return
 
+    from loupe._multimodal import (
+        extract_tool_calls_from_messages,
+        extract_tool_calls_from_response,
+        scrub_media,
+    )
+
     model = _extract_model(request, body)
     inputs: dict[str, Any] = {"provider": provider, "model": model}
     if isinstance(body, dict):
         if "messages" in body:
-            inputs["messages"] = _truncate(redact(body["messages"]))
+            # scrub_media → strip inline image/audio bytes BEFORE redact +
+            # truncate. Keeps the JSONL small + the structure intact.
+            scrubbed_msgs = scrub_media(body["messages"])
+            inputs["messages"] = _truncate(redact(scrubbed_msgs))
+            tcs = extract_tool_calls_from_messages(scrubbed_msgs)
+            if tcs:
+                inputs["tool_calls"] = _truncate(tcs)
         if "prompt" in body:
             inputs["prompt"] = _truncate(redact(body["prompt"]))
         if "max_tokens" in body:
             inputs["max_tokens"] = body["max_tokens"]
         if body.get("stream"):
             inputs["stream"] = True
+        # Gemini-style multimodal content sits under `contents`, not
+        # `messages` — scrub it the same way.
+        if "contents" in body:
+            inputs["contents"] = _truncate(redact(scrub_media(body["contents"])))
 
     outputs: dict[str, Any] = {}
+    # When the HTTP call failed (4xx/5xx) the provider returns an error
+    # BODY ("API key not valid", "rate limit exceeded", "context length
+    # exceeded", …) — that message is the whole point of a forensic
+    # capture. Surface it both in outputs and as the step's error so
+    # `loupe show` / the dashboard lead with the cause, not just a code.
+    step_error: str | None = repr(error) if error is not None else None
     if response is not None:
-        outputs["status"] = getattr(response, "status_code", None)
+        status = getattr(response, "status_code", None)
+        outputs["status"] = status
         # Only try to decode JSON for non-streaming responses
         if not bool(inputs.get("stream")):
             try:
                 payload = response.json()
                 outputs.update(_summarize_response(provider, payload))
+                tool_calls = extract_tool_calls_from_response(provider, payload)
+                if tool_calls:
+                    outputs["tool_calls"] = _truncate(tool_calls)
+                if isinstance(status, int) and status >= 400:
+                    msg = _extract_error_message(payload)
+                    if msg:
+                        outputs["error"] = _truncate(msg)
+                        if step_error is None:
+                            step_error = f"HTTP {status}: {msg}"[:500]
             except Exception:
                 pass
+        # Even when the body isn't JSON, a failed status is itself an error.
+        if step_error is None and isinstance(status, int) and status >= 400:
+            step_error = f"HTTP {status}"
 
     t.add_step(
         Step(
@@ -290,10 +373,36 @@ def _emit(
             ended_at=time.time(),
             inputs=inputs,
             outputs=outputs,
-            error=repr(error) if error is not None else None,
+            error=step_error,
             metadata={"transport": "httpx"},
         )
     )
+
+
+def _extract_error_message(body: Any) -> str | None:
+    """Pull a human-readable error message out of a provider error body.
+
+    Handles the common shapes — all three major providers nest the
+    message under ``error``:
+      OpenAI/Gemini : {"error": {"message": "...", "code": 400, ...}}
+      Anthropic     : {"type": "error", "error": {"message": "..."}}
+    Falls back to a stringified body so nothing is ever lost.
+    """
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            msg = err.get("message")
+            if isinstance(msg, str) and msg.strip():
+                return msg.strip()
+        if isinstance(err, str) and err.strip():
+            return err.strip()
+        # Some providers put the message at the top level.
+        msg = body.get("message")
+        if isinstance(msg, str) and msg.strip():
+            return msg.strip()
+    if body:
+        return str(body)
+    return None
 
 
 def _summarize_response(provider: str, body: dict) -> dict[str, Any]:
@@ -366,13 +475,26 @@ def _summarize_response(provider: str, body: dict) -> dict[str, Any]:
 
 
 def _truncate(value: Any, *, limit: int = 4000) -> Any:
+    """Cap an arbitrary value's serialized size at ``limit`` bytes.
+
+    Lists + dicts are preserved as native structures whenever their JSON
+    form fits — this keeps the wire format honest (a list stays a JSON
+    list, not a Python ``repr`` string the dashboard would have to parse
+    back). They're only stringified when they actually exceed ``limit``.
+    """
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
         return value if len(value) <= limit else value[:limit] + "…[truncated]"
     if isinstance(value, (list, dict)):
-        text = repr(value)
-        return text if len(text) <= limit else text[:limit] + "…[truncated]"
+        try:
+            text = _json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            text = repr(value)
+        if len(text) <= limit:
+            # Native structure round-trips cleanly through json.dumps.
+            return value
+        return text[:limit] + "…[truncated]"
     try:
         text = repr(value)
     except Exception:
