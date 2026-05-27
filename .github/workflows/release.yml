@@ -1,16 +1,17 @@
 name: Release
 
-# Publishing is automated + secret-free. Push a version tag and this
-# workflow builds, tests, and publishes BOTH packages:
-#   - loupe        → PyPI   via OIDC Trusted Publishing (no token)
-#   - loupe-ai   → npm    via OIDC Trusted Publishing + provenance
+# Publishing is automated. Push a version tag and this workflow builds,
+# tests, and publishes BOTH packages:
+#   - loupe-ai → PyPI  via OIDC Trusted Publishing (no token)
+#   - loupe-ai → npm   via an Automation NPM_TOKEN secret + provenance
 #
 # Cut a release:
 #   1. bump the version in all four sources (the parity test enforces it)
-#   2. git tag v0.0.73 && git push origin v0.0.73
+#   2. git tag v0.0.74 && git push origin v0.0.74
 #
-# One-time setup (see RELEASING.md) configures the trusted publishers so
-# no long-lived tokens ever live in the repo.
+# One-time setup (see RELEASING.md): PyPI trusts the GitHub OIDC identity
+# (no stored token); npm uses an Automation token in the NPM_TOKEN secret
+# (the only token type that bypasses 2FA in CI).
 
 on:
   push:
