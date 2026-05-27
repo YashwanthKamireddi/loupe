@@ -955,10 +955,16 @@ def test_bench_filters_by_category(
 
 
 def test_typo_suggestion_offers_close_match() -> None:
-    """`loupe sho` should suggest `loupe show` and exit 1 cleanly."""
+    """`loupe sho` should suggest `loupe show` and exit 1 cleanly.
+
+    Invoked through the active interpreter (`python -m loupe.cli`) so the
+    test runs anywhere — a local .venv, CI's system Python, a tox env —
+    without depending on a `.venv/bin/loupe` console script existing.
+    """
     import subprocess
+    import sys
     res = subprocess.run(
-        [str(Path(__file__).parent.parent / ".venv" / "bin" / "loupe"), "sho"],
+        [sys.executable, "-m", "loupe.cli", "sho"],
         capture_output=True, text=True,
     )
     assert res.returncode == 1
