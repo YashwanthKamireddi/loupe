@@ -30,6 +30,7 @@ from typing import Any
 
 from loupe._redact import redact
 from loupe.integrations import suppress_http_capture
+from loupe.integrations._autopatch import ensure_implicit_trace_if_autopatch
 from loupe.integrations._streaming import TracedAsyncStream, TracedSyncStream
 from loupe.trace import Step, current_trace
 
@@ -78,38 +79,43 @@ def patch() -> bool:
 def _wrap_sync(original: Any, kind: str) -> Any:
     @functools.wraps(original)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-        started = time.time()
-        streaming = bool(kwargs.get("stream", False))
+        # Zero-code autopatch: if no @trace is on the stack but LOUPE_AUTOPATCH
+        # is enabled, open a one-call implicit trace around this SDK call so
+        # the capture isn't silently dropped. Matches the universal-httpx
+        # behavior — every entry path leads to a trace.
+        with ensure_implicit_trace_if_autopatch():
+            started = time.time()
+            streaming = bool(kwargs.get("stream", False))
 
-        if not streaming:
-            error: BaseException | None = None
-            result: Any = None
+            if not streaming:
+                error: BaseException | None = None
+                result: Any = None
+                try:
+                    with suppress_http_capture():
+                        result = original(self, *args, **kwargs)
+                    return result
+                except BaseException as exc:
+                    error = exc
+                    raise
+                finally:
+                    _emit_single(kind, kwargs, result, error, started)
+
             try:
                 with suppress_http_capture():
-                    result = original(self, *args, **kwargs)
-                return result
+                    original_stream = original(self, *args, **kwargs)
             except BaseException as exc:
-                error = exc
+                _emit_single(kind, kwargs, None, exc, started)
                 raise
-            finally:
-                _emit_single(kind, kwargs, result, error, started)
 
-        try:
-            with suppress_http_capture():
-                original_stream = original(self, *args, **kwargs)
-        except BaseException as exc:
-            _emit_single(kind, kwargs, None, exc, started)
-            raise
-
-        consume, finish = _make_accumulator(kind)
-        return TracedSyncStream(
-            original_stream,
-            on_event=consume,
-            on_finish=finish,
-            step_name=f"openai-{kind}:{kwargs.get('model', 'unknown')}",
-            inputs=_input_summary(kwargs),
-            started_at=started,
-        )
+            consume, finish = _make_accumulator(kind)
+            return TracedSyncStream(
+                original_stream,
+                on_event=consume,
+                on_finish=finish,
+                step_name=f"openai-{kind}:{kwargs.get('model', 'unknown')}",
+                inputs=_input_summary(kwargs),
+                started_at=started,
+            )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper
@@ -118,38 +124,39 @@ def _wrap_sync(original: Any, kind: str) -> Any:
 def _wrap_async(original: Any, kind: str) -> Any:
     @functools.wraps(original)
     async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-        started = time.time()
-        streaming = bool(kwargs.get("stream", False))
+        with ensure_implicit_trace_if_autopatch():
+            started = time.time()
+            streaming = bool(kwargs.get("stream", False))
 
-        if not streaming:
-            error: BaseException | None = None
-            result: Any = None
+            if not streaming:
+                error: BaseException | None = None
+                result: Any = None
+                try:
+                    with suppress_http_capture():
+                        result = await original(self, *args, **kwargs)
+                    return result
+                except BaseException as exc:
+                    error = exc
+                    raise
+                finally:
+                    _emit_single(kind, kwargs, result, error, started)
+
             try:
                 with suppress_http_capture():
-                    result = await original(self, *args, **kwargs)
-                return result
+                    original_stream = await original(self, *args, **kwargs)
             except BaseException as exc:
-                error = exc
+                _emit_single(kind, kwargs, None, exc, started)
                 raise
-            finally:
-                _emit_single(kind, kwargs, result, error, started)
 
-        try:
-            with suppress_http_capture():
-                original_stream = await original(self, *args, **kwargs)
-        except BaseException as exc:
-            _emit_single(kind, kwargs, None, exc, started)
-            raise
-
-        consume, finish = _make_accumulator(kind)
-        return TracedAsyncStream(
-            original_stream,
-            on_event=consume,
-            on_finish=finish,
-            step_name=f"openai-{kind}:{kwargs.get('model', 'unknown')}",
-            inputs=_input_summary(kwargs),
-            started_at=started,
-        )
+            consume, finish = _make_accumulator(kind)
+            return TracedAsyncStream(
+                original_stream,
+                on_event=consume,
+                on_finish=finish,
+                step_name=f"openai-{kind}:{kwargs.get('model', 'unknown')}",
+                inputs=_input_summary(kwargs),
+                started_at=started,
+            )
 
     setattr(wrapper, _PATCHED_FLAG, True)
     return wrapper

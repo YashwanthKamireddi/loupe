@@ -88,11 +88,25 @@ async def main() -> int:
         )
         return 2
 
-    print(f"▶  task: {TASK}\n")
-    print("   (Loupe is silently capturing every LLM call.)\n")
+    # browser-use's Agent defaults to OpenAI when no llm is passed. Pick
+    # whichever provider the user has a key for so this script runs on
+    # whatever credentials they actually have on hand.
+    llm = None
+    if os.environ.get("OPENAI_API_KEY"):
+        from browser_use.llm import ChatOpenAI
+        llm = ChatOpenAI(model="gpt-4o-mini")
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        from browser_use.llm import ChatAnthropic
+        llm = ChatAnthropic(model="claude-3-5-haiku-latest")
+    elif os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        from browser_use.llm import ChatGoogle
+        llm = ChatGoogle(model="gemini-2.5-flash")
 
-    agent = Agent(task=TASK)
-    await agent.run()
+    print(f"▶  task: {TASK}\n")
+    print(f"   (using {type(llm).__name__ if llm else 'default LLM'} — Loupe captures via httpx)\n")
+
+    agent = Agent(task=TASK, llm=llm) if llm is not None else Agent(task=TASK)
+    await agent.run(max_steps=15)
 
     print("\n──────────────────────────────────────────")
     print("done. inspect the capture with:")

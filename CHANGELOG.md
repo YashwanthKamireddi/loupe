@@ -9,6 +9,50 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.76] — 2026-06-03  ·  **Two real bugs fixed by running on real third-party agents**
+
+Discovered by actually running Loupe end-to-end against the browser-use
+OSS agent (96.9k *) and openai SDK pointed at Google's OpenAI-compatible
+Gemini endpoint. Both were silently breaking "zero-code capture" — the
+core pitch of the project — and got past every existing test.
+
+**Fix 1 — localhost CDP traffic no longer captured as fake `llm-call`.**
+The `local-ip` / `localhost` / `0.0.0.0` providers (registered for
+Ollama / vLLM / LM Studio users) were too greedy: any HTTP traffic to
+127.0.0.1 — Playwright Chrome DevTools Protocol, local dev servers,
+mDNS, health checks — landed as bogus `llm-call` rows. Now the
+classifier requires an OpenAI-shaped body (`messages` + `model` list)
+before capturing localhost calls. Genuine Ollama traffic still flows.
+Regression test: `test_localhost_only_captured_when_body_looks_llm_shaped`.
+
+**Fix 2 — direct integrations now respect `LOUPE_AUTOPATCH=1`.**
+When `openai` (or anthropic, langchain, ...) was installed, Loupe's
+direct-SDK integration set `direct_capture_active=True` during calls —
+correctly suppressing the universal httpx layer — but its own
+`_emit_single` *silently returned* when no `@trace` decorator was on
+the stack. So `pip install loupe-ai openai && LOUPE_AUTOPATCH=1 python
+my_agent.py` captured nothing. Now every direct integration wraps the
+call site with `ensure_implicit_trace_if_autopatch`, mirroring the
+universal-httpx behavior — every path leads to a trace.
+
+**New `examples/multistep_capture_demo.py`** — a real multi-step
+research-style agent (planner → sub-questions → synthesis) hitting
+Gemini via the openai SDK pointed at Google's OpenAI-compatible
+endpoint. Demonstrates that Loupe captures cleanly when the SDK uses
+httpx, and exercises the autopatch-implicit-trace path in production.
+
+**New shared `loupe.integrations._autopatch`** — `autopatch_enabled()`
+and `ensure_implicit_trace_if_autopatch()` extracted from the httpx
+layer so every direct integration uses one consistent gate.
+
+**Known limitation documented:** the native `google-genai` SDK uses
+Google's own HTTP transport (not httpx), so `LOUPE_AUTOPATCH=1` does
+NOT capture it. Workarounds: (a) use Gemini through the openai SDK
+against Google's OpenAI-compatible endpoint
+(`https://generativelanguage.googleapis.com/v1beta/openai/`), or (b)
+use `loupe proxy` to MITM-capture at the HTTP layer. A native
+`google-genai` integration is a candidate for v0.1.
+
 ## [0.0.75] — 2026-06-03  ·  **World-class CLI: `loupe watch`, animated banner, arrow-key setup, sparklines**
 
 Four surgical upgrades that move Loupe's terminal experience from

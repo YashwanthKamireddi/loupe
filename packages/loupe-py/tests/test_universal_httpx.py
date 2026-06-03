@@ -160,6 +160,57 @@ def test_ignores_unknown_hosts(store: JSONLStore) -> None:
     assert len(steps) == 0
 
 
+def test_localhost_only_captured_when_body_looks_llm_shaped(store: JSONLStore) -> None:
+    """Loopback (Ollama/vLLM/LM Studio) hosts must NOT capture non-LLM traffic.
+
+    Playwright's Chrome DevTools Protocol, local dev servers, mDNS, health
+    checks — all hit 127.0.0.1 / localhost — and any of them would land as
+    bogus ``llm-call`` rows without a body-shape gate. Regression captured
+    from running Loupe against the browser-use OSS agent (96.9k *).
+    """
+    _install_fake_httpx()
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+
+    import httpx
+    httpx._state["response"] = _make_response(200, {"ok": True})  # type: ignore[attr-defined]
+
+    # 1. CDP-shaped payload (no `messages`/`model` field) to 127.0.0.1 →
+    #    NOT captured (the regression we just fixed).
+    @trace(framework="universal-test", store=store)
+    def cdp_call() -> Any:
+        cdp_body = {"id": 1, "method": "Page.navigate", "params": {"url": "x"}}
+        return httpx.Client().send(_make_request("http://127.0.0.1:9222/json", body=cdp_body))
+
+    cdp_call()
+    assert len(_read_steps(store)) == 0, "Playwright CDP traffic must NOT be captured as llm-call"
+
+    # 2. Genuine local-LLM call (Ollama-shaped chat completion) to
+    #    127.0.0.1 → MUST still be captured (Ollama users depend on it).
+    sys.modules.pop("loupe.integrations.httpx", None)
+    httpx_mod = importlib.import_module("loupe.integrations.httpx")
+    httpx_mod.patch()
+    httpx._state["response"] = _make_response(200, {"choices": [{"message": {"content": "hi"}}]})  # type: ignore[attr-defined]
+
+    other_store = JSONLStore(root=store.root.parent / "ollama-traces")
+
+    @trace(framework="universal-test", store=other_store)
+    def ollama_call() -> Any:
+        llm_body = {"model": "llama3", "messages": [{"role": "user", "content": "hi"}]}
+        url = "http://127.0.0.1:11434/v1/chat/completions"
+        return httpx.Client().send(_make_request(url, body=llm_body))
+
+    ollama_call()
+    ollama_steps = [
+        _json.loads(line)
+        for line in next((other_store.root).glob("*.jsonl")).read_text().splitlines()
+        if _json.loads(line)["_type"] == "step"
+    ]
+    assert len(ollama_steps) == 1, "Genuine local-LLM Ollama call MUST still be captured"
+    assert ollama_steps[0]["inputs"]["provider"] == "local-ip"
+
+
 def test_idempotent_patch() -> None:
     _install_fake_httpx()
     sys.modules.pop("loupe.integrations.httpx", None)

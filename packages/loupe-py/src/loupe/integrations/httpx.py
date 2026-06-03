@@ -253,6 +253,15 @@ def _classify(request: Any, body: Any) -> str | None:
     host = _host_of(request)
     matched = detect_provider_from_host(host)
     if matched is not None:
+        # `local` providers (localhost / 127.0.0.1 / 0.0.0.0) are
+        # ambiguous: Ollama, vLLM, LM Studio all bind there — but so do
+        # Playwright's Chrome DevTools Protocol, local dev servers,
+        # health checks, mDNS, and a hundred other non-LLM things. Only
+        # capture when the body actually walks like an LLM request, so
+        # running an agent inside a browser-driven harness doesn't fill
+        # the trace store with CDP noise.
+        if matched.category == "local" and not looks_like_openai_compatible(body):
+            return None
         return matched.label
     # Fallback: it walks like OpenAI? Capture it anyway.
     if looks_like_openai_compatible(body) and host:
