@@ -33,7 +33,7 @@ from openai import OpenAI
 # accepts your standard Gemini API key. The OpenAI Python client uses
 # httpx under the hood, so Loupe captures every call automatically.
 GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash-lite"
 
 
 def main() -> int:

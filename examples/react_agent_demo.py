@@ -30,7 +30,7 @@ from openai import OpenAI
 from loupe import record_step, trace
 
 GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash-lite"
 
 # The task the agent has to solve. Forces it to use both tools (it
 # can't answer the second half without calculating length-of-string).
@@ -45,15 +45,19 @@ SYSTEM = """You are a ReAct agent with two tools available:
   - calc(expr: str)         evaluates a Python arithmetic expression
   - count_letters(s: str)   returns the number of letters (a-z, A-Z) in s
 
+You MUST use these tools — never compute arithmetic or letter counts in
+your head. Always issue an ACTION before producing a FINAL.
+
 Respond in EXACTLY this format (no markdown, no prose outside it):
 
   THOUGHT: <one sentence>
   ACTION:  <tool_name>(<argument>)
 
-OR — when you have the final answer:
+OR — ONLY after you have already used the tools and received
+OBSERVATIONS for every part of the question — give the final answer:
 
-  THOUGHT: <one sentence>
-  FINAL:   <the answer>
+  THOUGHT: <one sentence summarising the tool observations>
+  FINAL:   <the answer derived strictly from those observations>
 """
 
 
