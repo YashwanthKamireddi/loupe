@@ -9,6 +9,41 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.75] — 2026-06-03  ·  **World-class CLI: `loupe watch`, animated banner, arrow-key setup, sparklines**
+
+Four surgical upgrades that move Loupe's terminal experience from
+polished to wow — without breaking scripting, JSON output, or any
+existing command.
+
+- **`loupe watch`** — new top-level command: a live forensic dashboard
+  in your terminal. Built on Textual; refreshes every 500 ms; tails
+  `~/.loupe/traces/*.jsonl` and renders each capture as a one-line
+  card. `q` quits · `r` refresh · `f` failed-only filter. Pair with
+  `loupe ui` (the FastAPI dashboard) — this is the in-shell counterpart.
+- **First-run-only animated banner** — a ~240 ms gradient sweep on the
+  wordmark the very first time you run `loupe` interactively. Persists
+  a marker at `~/.loupe/.banner-seen` so every subsequent run is the
+  static banner. Honors `NO_COLOR`, `CI`, and non-TTY pipes — silent
+  by default in scripts.
+- **`loupe setup` arrow-key picker** — provider selection now uses a
+  proper interactive selector (questionary) with `↑`/`↓` + Enter on a
+  TTY; CI / piped runs still get the numbered-input fallback.
+- **Inline sparklines on `loupe cost` + `loupe stats`** — a 14-day
+  capture-rate / spend sparkline rendered beside the totals. `--json`
+  output stays clean (no chart in machine-readable mode).
+- **Centralized terminal detection** — new `loupe._term` with
+  `is_tty()`, `use_color()`, `use_animation()`. Single source of truth
+  for `NO_COLOR` / `FORCE_COLOR` / `CI` respect — replaces inline
+  `sys.stdout.isatty()` checks at three call sites.
+- **`examples/` directory** — two ready-to-run demo scripts targeting
+  notable public OSS agents: `browser_use_demo.py` (96.9k ★) and
+  `gpt_researcher_demo.py` (27.5k ★). Run either with
+  `LOUPE_AUTOPATCH=1` to see Loupe capture a real agent zero-code.
+
+New required deps (~5 MB total): `textual`, `questionary`. All MIT,
+all mature in 2026. Justified by genuine new function (live dashboard,
+arrow-key picker) — not decoration.
+
 ## [0.0.74] — 2026-05-27  ·  **Correct package repository metadata**
 
 Pointed both packages' `repository`/`Repository` URLs at the real repo

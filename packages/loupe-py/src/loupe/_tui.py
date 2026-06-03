@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from pathlib import Path
 
 from rich.box import SIMPLE
 from rich.console import Console, Group
@@ -81,6 +82,130 @@ def banner(subtitle: str | None = None, version: str | None = None) -> Group:
         pieces.append(Text(subtitle, style=f"italic {INK_2}"))
     pieces.append(Rule(style=DIM_2, characters="·"))
     return Group(*pieces)  # type: ignore[arg-type]
+
+
+# --- First-run animated banner -------------------------------------------
+#
+# Plays a tiny ~240ms gradient sweep across the wordmark the FIRST time a
+# user invokes ``loupe`` interactively. Every subsequent invocation falls
+# back to the static :func:`banner` above. Gated by:
+#   * a marker file (~/.loupe/.banner-seen)
+#   * :func:`loupe._term.use_animation` (off in CI, NO_COLOR, or when
+#     stdout/stdin aren't TTYs)
+# so scripting and piping are never slowed down.
+
+
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _lerp_color(a: str, b: str, t: float) -> str:
+    """Linearly interpolate between two ``#rrggbb`` hex colors at ``t∈[0,1]``."""
+    ar, ag, ab = _hex_to_rgb(a)
+    br, bg, bb = _hex_to_rgb(b)
+    return (
+        f"#{round(ar + (br - ar) * t):02x}"
+        f"{round(ag + (bg - ag) * t):02x}"
+        f"{round(ab + (bb - ab) * t):02x}"
+    )
+
+
+def _ease(t: float) -> float:
+    """Symmetric ease — 0 at the edges, 1 in the middle of the word."""
+    return 4 * t * (1 - t)
+
+
+def _gradient_brand(version: str | None, phase: float) -> Text:
+    """Render the ◉ loupe wordmark with a phase-shifted gradient sweep.
+
+    ``phase`` in [0, 1] shifts the gradient highlight horizontally —
+    chaining several phases produces the one-shot sweep animation.
+    """
+    word = "loupe"
+    n = len(word)
+    brand = Text()
+    brand.append(f"{LOGO_MARK}  ", style=f"bold {AMBER}")
+    for i, ch in enumerate(word):
+        t = ((i / max(1, n - 1)) + phase) % 1.0
+        color = _lerp_color(AMBER, AMBER_SOFT, _ease(t))
+        brand.append(ch, style=f"bold {color}")
+    if version:
+        brand.append(f"  v{version}", style=DIM_2)
+    return brand
+
+
+def play_first_run_intro(
+    subtitle: str | None = None,
+    version: str | None = None,
+    *,
+    frames: int = 4,
+    frame_seconds: float = 0.06,
+) -> None:
+    """Play the first-run gradient sweep, then leave the brand on screen.
+
+    Honors the caller's already-gated decision — does NOT re-check
+    :func:`use_animation` here. Use :func:`should_play_first_run_intro`
+    before calling. ``frames`` / ``frame_seconds`` are exposed so tests
+    can run with zero sleep.
+    """
+    import time
+
+    from rich.live import Live
+
+    initial = _gradient_brand(version, 0.0)
+    with Live(initial, console=console, refresh_per_second=30, transient=True) as live:
+        for f in range(frames):
+            phase = (f + 1) / max(1, frames)
+            live.update(_gradient_brand(version, phase))
+            if frame_seconds > 0:
+                time.sleep(frame_seconds)
+
+    # Final non-transient print so the brand stays in scrollback as the
+    # full banner shape (brand + subtitle + rule) — matches static banner.
+    console.print(banner(subtitle, version=version))
+
+
+def _banner_seen_path() -> Path:
+    """Where we persist the 'first-run banner played' marker."""
+    from loupe.store import _default_dir
+    return _default_dir() / ".banner-seen"
+
+
+def should_play_first_run_intro() -> bool:
+    """True iff the animated banner should play right now.
+
+    Three gates AND'd together: animation allowed by the terminal,
+    a marker file does not yet exist, and we can write to it (so a
+    read-only home dir does not stall startup on every invocation).
+    """
+    from loupe._term import use_animation
+
+    if not use_animation():
+        return False
+    marker = _banner_seen_path()
+    if marker.exists():
+        return False
+    # Make sure we'll be able to mark it afterwards — otherwise the
+    # animation plays every invocation, which is exactly what we don't
+    # want. A read-only home short-circuits to False.
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    else:
+        return True
+
+
+def mark_first_run_seen() -> None:
+    """Touch the marker so :func:`should_play_first_run_intro` is False next time.
+
+    Best-effort: a write failure (read-only home, full disk, racing
+    parallel processes) is silently swallowed — failing here would
+    crash a successful first run, which is the worst possible UX.
+    """
+    with suppress(OSError):
+        _banner_seen_path().touch(exist_ok=True)
 
 
 # --- Section heading -------------------------------------------------------

@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # `loupe` (see [tool.hatch...packages] and [project.scripts]); only the
 # pip-install name is `loupe-ai` because `loupe` was already taken.
 name = "loupe-ai"
-version = "0.0.74"
+version = "0.0.75"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,6 +38,12 @@ dependencies = [
     # plain `pip install loupe`, no `loupe[ui]` extra step.
     "fastapi>=0.110.0",
     "uvicorn>=0.30.0",
+    # Arrow-key picker for `loupe setup` and any future interactive
+    # wizard. Small (~50 KB), MIT, mature in 2026.
+    "questionary>=2.0.0",
+    # Live in-terminal forensic dashboard (`loupe watch`). Same author
+    # as Rich; ships its own widget framework. MIT.
+    "textual>=0.85.0",
 ]
 
 [project.optional-dependencies]

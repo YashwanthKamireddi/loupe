@@ -33,6 +33,7 @@ from typing import Any
 import typer
 from rich.text import Text
 
+from loupe._term import is_tty
 from loupe._tui import (
     AMBER,
     DIM,
@@ -44,8 +45,11 @@ from loupe._tui import (
     console,
     hint,
     kv_table,
+    mark_first_run_seen,
+    play_first_run_intro,
     render_padded,
     section,
+    should_play_first_run_intro,
     spinner,
     stack,
     status_table,
@@ -115,10 +119,7 @@ def _smart_route() -> None:
     # First-run case: no config + no traces → if interactive, guide them
     # through setup. Otherwise show the static welcome with `loupe setup`
     # at the top so it's still discoverable.
-    is_interactive = (
-        sys.stdin.isatty() and sys.stdout.isatty()
-        and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
-    )
+    is_interactive = is_tty() and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
     if not has_provider and not has_traces and is_interactive:
         from loupe._onboard import looks_like_project
         # In a real project folder, run the on-your-code onboarding: it
@@ -220,7 +221,17 @@ def _show_welcome() -> None:
             cmd("loupe stats         # aggregate breakdown by framework + failure"),
         )
 
-    blocks: list[object] = [banner(sub, version=__version__), Text()]
+    blocks: list[object] = []
+    # On a user's first invocation, play a ~240ms gradient sweep on the
+    # wordmark before the welcome content. The intro itself prints the
+    # full banner (brand + subtitle + rule) on its way out, so the
+    # static `banner(...)` block is skipped in that branch.
+    if should_play_first_run_intro():
+        play_first_run_intro(sub, version=__version__)
+        mark_first_run_seen()
+        blocks.append(Text())
+    else:
+        blocks.extend([banner(sub, version=__version__), Text()])
     if pitch_block is not None:
         blocks.extend([pitch_block, Text()])
     blocks.extend([
@@ -552,9 +563,60 @@ def _run_setup(
 def _prompt_provider() -> str:
     """Ask the user which provider to configure.
 
-    Defaults to the first entry in the registry (Gemini — free tier, the
-    fastest path to a first trace).
+    On a real TTY uses :mod:`questionary` for arrow-key navigation; on
+    non-TTY (CI, piped, CliRunner) falls back to the numbered-prompt
+    flow so scripts and tests never block waiting on keypresses.
     """
+    if is_tty():
+        try:
+            return _prompt_provider_interactive()
+        except (ImportError, ModuleNotFoundError):
+            # questionary missing for some reason — degrade gracefully
+            # to the always-available numbered input. setup must never
+            # die on a missing dep.
+            pass
+    return _prompt_provider_fallback()
+
+
+def _prompt_provider_interactive() -> str:
+    """Arrow-key picker via questionary. Raises ImportError if unavailable."""
+    import questionary
+
+    from loupe._setup_providers import SETUP_PROVIDERS
+
+    width = max(len(p.label) for p in SETUP_PROVIDERS)
+    choices = [
+        questionary.Choice(
+            title=f"{p.label.ljust(width)}   {p.tagline}",
+            value=p.label,
+        )
+        for p in SETUP_PROVIDERS
+    ]
+    console.print(section("Pick a provider"))
+    console.print()
+    try:
+        picked = questionary.select(
+            "  Provider",
+            choices=choices,
+            default=choices[0].value,
+            instruction="(↑/↓ then Enter)",
+            qmark="",
+            pointer="▶",
+            use_indicator=False,
+            use_arrow_keys=True,
+            use_shortcuts=False,
+        ).unsafe_ask()
+    except KeyboardInterrupt:
+        console.print(Text("\n  ✗ setup cancelled.", style=RED))
+        raise typer.Exit(code=1) from None
+    if picked is None:  # user hit Esc
+        console.print(Text("\n  ✗ setup cancelled.", style=RED))
+        raise typer.Exit(code=1)
+    return picked
+
+
+def _prompt_provider_fallback() -> str:
+    """Numbered-prompt provider picker — used when not on a real TTY."""
     from loupe._setup_providers import SETUP_PROVIDERS
 
     console.print(section("Pick a provider"))
@@ -605,12 +667,9 @@ def _ensure_provider_or_setup(intent: str) -> None:
     if Config.load().configured_providers():
         return
 
-    is_tty = (
-        sys.stdin.isatty() and sys.stdout.isatty()
-        and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
-    )
+    is_interactive = is_tty() and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
 
-    if not is_tty:
+    if not is_interactive:
         console.print(Text("  ✗ no provider configured yet.", style=RED))
         console.print(hint("loupe setup    configure your first provider"))
         raise typer.Exit(code=1)
@@ -1792,6 +1851,31 @@ def _extract_token_summary(outputs: dict) -> str:
 # ----------------------------------------------------------------------------
 
 
+@app.command("watch", rich_help_panel=_GROUP_INSPECT)
+def watch() -> None:
+    """Live forensic dashboard in your terminal — captures appear as they happen.
+
+    Renders every captured trace as a one-line card in a Textual app,
+    auto-refreshing every 500 ms. Header shows a 14-day capture-rate
+    sparkline; footer shows the hot-key bar. ``q`` quits; ``f`` toggles
+    failed-only filter; ``r`` forces a manual refresh.
+
+    Pair with ``loupe ui`` — the latter is the full FastAPI dashboard in
+    the browser; this is the terminal counterpart for stay-in-the-shell
+    sessions.
+    """
+    from loupe._watch import run as _watch_run
+
+    if not is_tty():
+        console.print(
+            Text("  ✗ ", style=RED)
+            + Text("loupe watch needs an interactive terminal.", style=INK)
+        )
+        console.print(hint("loupe list      tail-friendly fallback (use jq for filtering)"))
+        raise typer.Exit(code=1)
+    _watch_run()
+
+
 @app.command("ui", rich_help_panel=_GROUP_INSPECT)
 def ui(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
@@ -2622,10 +2706,7 @@ def _run_onboard() -> None:
     """
     from loupe._onboard import detect_agent_scripts
 
-    is_tty = (
-        sys.stdin.isatty() and sys.stdout.isatty()
-        and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
-    )
+    is_interactive = is_tty() and not os.environ.get("LOUPE_DISABLE_AUTOSETUP")
 
     render_padded(banner("onboard", version=__version__))
     console.print(
@@ -2638,7 +2719,7 @@ def _run_onboard() -> None:
     candidates = detect_agent_scripts(cwd)
 
     # --- non-interactive: print the outline, run NOTHING ----------------
-    if not is_tty:
+    if not is_interactive:
         console.print(section("what onboarding does"))
         console.print()
         console.print(hint("1. configure a provider key"))
@@ -3423,14 +3504,31 @@ def stats(
     from rich.box import SIMPLE
     from rich.table import Table
 
-    summary = kv_table([
+    from loupe._sparkline import daily_series
+    from loupe._sparkline import sparkline as _sparkline
+
+    # 14-day capture-rate sparkline. Walks headers regardless of indexed
+    # vs JSONL-walk path so both branches get the visual trend cheaply
+    # (one-line read per trace file).
+    from loupe.store import read_trace_header as _read_hdr
+    spark_items: list[tuple[float, float]] = []
+    for _p in sorted(traces_dir.glob("*.jsonl")) if traces_dir.exists() else []:
+        _h = _read_hdr(_p)
+        if _h is not None and _h.get("started_at") is not None:
+            spark_items.append((float(_h["started_at"]), 1.0))
+    spark = _sparkline(daily_series(spark_items, days=14))
+
+    summary_rows: list[tuple[str, str]] = [
         ("traces", str(total_traces)),
         ("failed", f"{failure_count}  ({failure_count / total_traces:.0%})"
          if total_traces else "0"),
         ("steps", str(step_count)),
         ("tagged", str(annotation_total)),
         ("median dur", f"{median_dur:.0f} ms" if median_dur is not None else "—"),
-    ])
+    ]
+    if spark:
+        summary_rows.append(("14d capture", spark))
+    summary = kv_table(summary_rows)
 
     framework_table = Table(
         show_header=False, show_edge=False, box=SIMPLE, padding=(0, 2),
@@ -4289,9 +4387,14 @@ def cost(
     trace_count = 0
     priced_steps = 0
     unpriced_steps = 0
+    # Per-trace (started_at, subtotal_usd) pairs feed the 14-day spend
+    # sparkline rendered below the totals row.
+    daily_cost_items: list[tuple[float, float]] = []
 
-    from loupe.store import iter_jsonl_records
+    from loupe.store import iter_jsonl_records, read_trace_header
     for path in sorted(traces_dir.glob("*.jsonl")):
+        header = read_trace_header(path)
+        trace_subtotal = 0.0
         trace_count += 1
         for obj in iter_jsonl_records(path):
             if obj.get("_type") != "step" or obj.get("kind") != "llm-call":
@@ -4336,10 +4439,15 @@ def cost(
                 continue
             priced_steps += 1
             total += cost_usd
+            trace_subtotal += cost_usd
             p = price_for(model_id, provider_hint)
             if p is not None:
                 by_provider[p.provider] += cost_usd
                 by_model_costs[p.model] += cost_usd
+
+        started_at = (header or {}).get("started_at")
+        if started_at is not None and trace_subtotal > 0:
+            daily_cost_items.append((float(started_at), trace_subtotal))
 
     if as_json:
         typer.echo(_json.dumps({
@@ -4355,12 +4463,18 @@ def cost(
     from rich.box import SIMPLE
     from rich.table import Table
 
-    summary = kv_table([
+    from loupe._sparkline import daily_series
+    from loupe._sparkline import sparkline as _sparkline
+    spark = _sparkline(daily_series(daily_cost_items, days=14))
+    summary_rows: list[tuple[str, str]] = [
         ("total", format_usd(total)),
         ("traces scanned", str(trace_count)),
         ("priced steps", str(priced_steps)),
         ("unpriced", str(unpriced_steps)),
-    ])
+    ]
+    if spark:
+        summary_rows.append(("14d spend", spark))
+    summary = kv_table(summary_rows)
 
     breakdown = Table(
         show_header=False, show_edge=False, box=SIMPLE, padding=(0, 2),
