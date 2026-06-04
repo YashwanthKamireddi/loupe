@@ -20,7 +20,25 @@
     </div>
     <div class="stats" id="stats"></div>
     <div class="meta" id="trace-summary"></div>
+    <button id="open-tour" type="button" class="tour-btn" title="Take a 30-second tour of the dashboard">tour</button>
   </header>
+
+  <!-- Lightweight opt-in tour overlay. Stays hidden until the topbar
+       'tour' button is clicked; never auto-launches; never blocks the
+       main dashboard surface. ESC or click-outside dismisses. -->
+  <div id="tour-overlay" class="tour-overlay" hidden aria-hidden="true">
+    <div class="tour-coachmark" id="tour-coachmark" role="dialog" aria-labelledby="tour-title">
+      <div class="tour-title" id="tour-title"></div>
+      <div class="tour-body" id="tour-body"></div>
+      <div class="tour-foot">
+        <span class="tour-progress" id="tour-progress"></span>
+        <div class="tour-actions">
+          <button type="button" class="tour-skip"  id="tour-skip">skip</button>
+          <button type="button" class="tour-next"  id="tour-next">next →</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <main class="layout">
     <aside class="sidebar">

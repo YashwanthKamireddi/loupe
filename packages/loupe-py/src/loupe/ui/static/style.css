@@ -1939,3 +1939,121 @@ input, select, textarea {
 .cluster-table .expl   { color: var(--c-ink-2); }
 
 .cluster-error { color: var(--c-red); padding: var(--s-5); font-family: var(--font-mono); }
+
+/* =========================================================================
+ * Opt-in dashboard tour (v0.0.78+).
+ * Coachmark overlays anchored to live UI elements via JS-positioning.
+ * Never modal, never auto-launching — user opts in via the topbar
+ * 'tour' button. ESC, skip, or click-outside dismisses.
+ * ========================================================================= */
+.tour-btn {
+  background: transparent;
+  color: var(--c-dim-2);
+  border: 1px solid var(--c-line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 120ms;
+  margin-left: var(--s-3);
+}
+.tour-btn:hover {
+  color: var(--c-amber);
+  border-color: var(--c-amber-soft);
+}
+
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: auto;
+  background: rgba(8, 10, 14, 0.55);
+  backdrop-filter: blur(1px);
+  animation: tour-fade-in 160ms ease;
+}
+.tour-overlay[hidden] { display: none; }
+
+@keyframes tour-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.tour-spotlight {
+  position: relative;
+  z-index: 9001;
+  box-shadow:
+    0 0 0 2px var(--c-amber, #e0a458),
+    0 0 0 8px rgba(224, 164, 88, 0.18),
+    0 0 24px rgba(224, 164, 88, 0.35);
+  border-radius: 6px;
+  transition: box-shadow 160ms;
+}
+
+.tour-coachmark {
+  position: fixed;
+  z-index: 9002;
+  width: 340px;
+  background: var(--c-panel, #1f2128);
+  border: 1px solid var(--c-amber-soft, rgba(224, 164, 88, 0.6));
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  color: var(--c-ink);
+  font-family: var(--font-sans, system-ui);
+}
+.tour-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-amber);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+.tour-body {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--c-ink-2);
+  margin-bottom: 14px;
+}
+.tour-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-2);
+}
+.tour-progress {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-dim);
+}
+.tour-actions { display: flex; gap: var(--s-2); }
+.tour-skip, .tour-next {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 120ms;
+}
+.tour-skip {
+  background: transparent;
+  color: var(--c-dim);
+  border: 1px solid var(--c-line);
+}
+.tour-skip:hover { color: var(--c-ink); }
+.tour-next {
+  background: var(--c-amber);
+  color: #1a1410;
+  border: none;
+  font-weight: 600;
+}
+.tour-next:hover { filter: brightness(1.08); }
+
+@media (max-width: 720px) {
+  .tour-coachmark {
+    width: calc(100% - 32px);
+    left: 16px !important;
+    right: 16px;
+  }
+}

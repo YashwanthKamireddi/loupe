@@ -9,6 +9,23 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.78] — 2026-06-03  ·  **Dashboard tour returns (opt-in) + Gemma-2-2b local demo**
+
+- **Opt-in dashboard tour.** A small `tour` button in the topbar
+  opens a 5-step coachmark overlay that points at the sidebar →
+  Cluster chip → evidence pane → live indicator → 14-day sparkline.
+  Never auto-launches, never blocks the main surface, ESC / skip /
+  click-outside dismisses. Replaces the old auto-launching first-run
+  tour that was stripped as a gimmick in v0.0.68 — same value,
+  controlled by the user.
+- **`examples/gemma_local_demo.py`** — a real ReAct agent that runs
+  against **Gemma-2-2b via local Ollama**. Because Gemma-2-2b is the
+  exact model the GemmaScope SAE was trained on, running
+  ``loupe attribute --sae gemma-2-2b <trace>`` on this trace gives
+  features that ARE what fired in the model — not an approximation
+  through a smaller surrogate. This is the canonical "real SAE
+  attribution on a real agent" path.
+
 ## [0.0.77] — 2026-06-03  ·  **Research-grade pivot: cluster view in dashboard + LoupeBench v0.1 grows**
 
 This is the start of Loupe's repositioning as **the open-source

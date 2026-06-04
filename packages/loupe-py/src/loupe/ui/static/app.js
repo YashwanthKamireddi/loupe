@@ -1255,15 +1255,6 @@ function renderClusterBody(data) {
   `;
 }
 
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 document.getElementById("open-cluster-view")?.addEventListener("click", () => {
   document.getElementById("open-cluster-view")?.classList.add("active");
   document.querySelectorAll(".filter-chip[data-filter]").forEach((b) => b.classList.remove("active"));
@@ -1397,4 +1388,125 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeTermPopover();
+});
+
+/* =========================================================================
+ * Opt-in dashboard tour (v0.0.78+).
+ * Lives in the topbar 'tour' button. Coachmarks anchor to real UI
+ * elements via getBoundingClientRect(); not modal — clicking outside or
+ * pressing ESC dismisses. Designed to take ~30 seconds total.
+ * ========================================================================= */
+const TOUR_STEPS = [
+  {
+    sel: ".sidebar",
+    title: "Case files",
+    body: "Every captured agent run lands here. Click one to see its steps + evidence.",
+  },
+  {
+    sel: "#filter-bar",
+    title: "Filter + Cluster",
+    body: "Filter by status. The ◇ Cluster chip on the right opens shared-feature analysis across all your tagged failures — the LoupeBench analytical primitive.",
+  },
+  {
+    sel: ".viewer",
+    title: "Evidence pane",
+    body: "Click any step → full prompt, full reply, latency, tokens, errors, and (after `loupe attribute`) the top SAE features that fired.",
+  },
+  {
+    sel: ".live-indicator",
+    title: "Live capture",
+    body: "Green dot = new traces stream in via SSE without a refresh. Pair with `loupe watch` in the terminal for a live in-terminal mirror.",
+  },
+  {
+    sel: "#cost-sparkline",
+    title: "14-day spend trend",
+    body: "Captured cost + activity sparkline. Hidden until you've captured a few runs with known model prices.",
+  },
+];
+
+let _tourIdx = 0;
+
+function _positionCoachmark(target) {
+  const cm = document.getElementById("tour-coachmark");
+  const overlay = document.getElementById("tour-overlay");
+  if (!cm || !overlay) return;
+  if (!target) {
+    cm.style.left = "50%";
+    cm.style.top = "50%";
+    cm.style.transform = "translate(-50%, -50%)";
+    return;
+  }
+  const r = target.getBoundingClientRect();
+  const pad = 12;
+  const cmW = 340;
+  const cmH = 160;
+  // Prefer to the right of the target; fall back to below; then center.
+  let left = r.right + pad;
+  let top = r.top + (r.height / 2) - (cmH / 2);
+  if (left + cmW > window.innerWidth - 16) {
+    left = Math.max(16, r.left + (r.width / 2) - (cmW / 2));
+    top  = r.bottom + pad;
+  }
+  if (top + cmH > window.innerHeight - 16) top = window.innerHeight - cmH - 16;
+  if (top < 16) top = 16;
+  cm.style.left = `${Math.max(16, left)}px`;
+  cm.style.top = `${top}px`;
+  cm.style.transform = "none";
+}
+
+function _renderTourStep() {
+  const step = TOUR_STEPS[_tourIdx];
+  if (!step) return _closeTour();
+  document.getElementById("tour-title").textContent = step.title;
+  document.getElementById("tour-body").textContent  = step.body;
+  document.getElementById("tour-progress").textContent =
+    `${_tourIdx + 1} / ${TOUR_STEPS.length}`;
+  const nextBtn = document.getElementById("tour-next");
+  nextBtn.textContent = _tourIdx === TOUR_STEPS.length - 1 ? "done" : "next →";
+  // Highlight + position
+  document.querySelectorAll(".tour-spotlight").forEach((el) =>
+    el.classList.remove("tour-spotlight"),
+  );
+  const target = document.querySelector(step.sel);
+  if (target) target.classList.add("tour-spotlight");
+  _positionCoachmark(target);
+}
+
+function _openTour() {
+  _tourIdx = 0;
+  const overlay = document.getElementById("tour-overlay");
+  if (!overlay) return;
+  overlay.hidden = false;
+  overlay.setAttribute("aria-hidden", "false");
+  _renderTourStep();
+}
+
+function _closeTour() {
+  const overlay = document.getElementById("tour-overlay");
+  if (!overlay) return;
+  overlay.hidden = true;
+  overlay.setAttribute("aria-hidden", "true");
+  document.querySelectorAll(".tour-spotlight").forEach((el) =>
+    el.classList.remove("tour-spotlight"),
+  );
+}
+
+document.getElementById("open-tour")?.addEventListener("click", _openTour);
+document.getElementById("tour-next")?.addEventListener("click", () => {
+  _tourIdx += 1;
+  if (_tourIdx >= TOUR_STEPS.length) _closeTour();
+  else _renderTourStep();
+});
+document.getElementById("tour-skip")?.addEventListener("click", _closeTour);
+document.getElementById("tour-overlay")?.addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) _closeTour();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") _closeTour();
+});
+window.addEventListener("resize", () => {
+  if (!document.getElementById("tour-overlay")?.hidden) {
+    const step = TOUR_STEPS[_tourIdx];
+    if (step) _positionCoachmark(document.querySelector(step.sel));
+  }
 });
