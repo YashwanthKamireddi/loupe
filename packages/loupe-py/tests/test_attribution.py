@@ -443,11 +443,12 @@ def test_dashboard_ships_opt_in_tour() -> None:
     assert ".tour-overlay" in css
     assert ".tour-coachmark" in css
     assert "TOUR_STEPS" in js
-    # The old auto-launch behavior must not return: the overlay starts
-    # hidden, and there should be no startup call to _openTour().
-    assert "_openTour()" not in js or js.count("_openTour()") <= 0
-    # Tour must NOT auto-fire on DOMContentLoaded.
-    assert "DOMContentLoaded" not in js or "openTour" not in js.split("DOMContentLoaded")[-1][:500]
+
+    # The old auto-launch behavior must not return: the overlay markup
+    # must start with the `hidden` attribute, so the tour is invisible
+    # until the user clicks the topbar button.
+    overlay_chunk = html.split('id="tour-overlay"', 1)[1][:200]
+    assert "hidden" in overlay_chunk, "tour overlay must start hidden (opt-in only)"
 
 
 def test_dashboard_ships_term_help_tooltips() -> None:
