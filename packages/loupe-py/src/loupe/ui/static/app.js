@@ -644,6 +644,25 @@ function renderTrace() {
   const timeline = els.viewer.querySelector("[data-track]");
   const stepList = els.viewer.querySelector("[data-steps]");
 
+  // Hide the horizontal timeline when it'd just duplicate the Steps
+  // column: short traces (≤3 steps) or traces where every step is a
+  // <10ms thought have no time information worth showing horizontally.
+  // The Steps column already lists them — orientation isn't worth a
+  // second copy.
+  const _totalMs = trace.steps.reduce(
+    (s, x) => s + (stepDurationMs(x) || 0), 0,
+  );
+  const _onlyThoughts = trace.steps.every((x) => x.kind === "thought");
+  const _tinyAll      = trace.steps.every((x) => (stepDurationMs(x) || 0) < 10);
+  if (
+    trace.steps.length <= 3
+    || _onlyThoughts
+    || (_totalMs < 50 && _tinyAll)
+  ) {
+    const wrap = els.viewer.querySelector(".timeline-wrap");
+    if (wrap) wrap.hidden = true;
+  }
+
   const annByStep = new Map();
   (trace.annotations || []).forEach((a) => annByStep.set(a.step_id, a));
 
@@ -1234,6 +1253,13 @@ function renderClusterBody(data) {
     </tr>`).join("");
 
   body.innerHTML = `
+    <p class="cluster-explainer">
+      Each row is an SAE feature that fired during a tagged failure.
+      <strong>Hits</strong> = how many annotations it appeared in.
+      <strong>Share</strong> = fraction of the filtered set.
+      A feature firing in 100% of failures is shared across them; one
+      firing in only 33% is noise unless ${data.category ? "distinctiveness" : "the distinctive table below"} flags it as over-represented in this category.
+    </p>
     <section class="cluster-section">
       <h2 class="cluster-h2">frequency
         <span class="cluster-meta">${data.in_category_count} annotation${data.in_category_count === 1 ? "" : "s"} · ${escapeHtml(cat)}</span>

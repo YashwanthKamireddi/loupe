@@ -9,6 +9,35 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.80] — 2026-06-03  ·  **Dashboard contrast + de-duplicated timeline + LIVE pill repositioned**
+
+Direct response to the screenshot review:
+
+- **LIVE pill moved from the brand to the right meta-row** — sits with
+  the trace summary + tour button as one cohesive right-side cluster.
+  The brand area is now just brand, no widgets dropped in alongside.
+- **Bumped text contrast** — `--ink-3` and `--ink-4` were too dim
+  (`#8c8472` / `#5b5547`) against the dark background; now `#b4ac98` /
+  `#847d6c`. Affects every dimmed label in the UI — case-file
+  metadata, eyebrows, table headers, hints. Reads cleanly without
+  squinting.
+- **Hide the horizontal Timeline strip when it duplicates the Steps
+  list** — for traces with ≤3 steps or only thought steps under 10 ms,
+  the timeline was visually identical to the Steps column rotated 90°.
+  Now hidden in those cases (no info lost; less noise). Real
+  multi-step traces with LLM-call durations still get the
+  Gantt-style strip.
+- **Tour backdrop softened** — was 55% black overlay (made the
+  dashboard hard to read while the tour was open); now 22% with a
+  brighter coachmark card + tighter typography. The spotlight ring
+  around the focused element does the visual work.
+- **Cluster view gained an explainer caption** — a one-line bar above
+  the frequency table that defines hits/share and notes when
+  distinctiveness matters. Removes the "what am I looking at?" gap.
+
+The Cluster view, the Tour, the Steps list, the Timeline now each do
+one thing — no two surfaces show the same data.
+
 ## [0.0.79] — 2026-06-03  ·  **Dashboard polish: topbar alignment, cluster table density, killed the useless Export pill**
 
 Fast follow on v0.0.78 after seeing the cluster view in production

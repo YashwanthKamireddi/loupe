@@ -19,9 +19,9 @@
 
   --ink:   #f5f0e3;
   --ink-2: #cabfa9;
-  --ink-3: #8c8472;
-  --ink-4: #5b5547;
-  --ink-5: #423d33;
+  --ink-3: #b4ac98;   /* was #8c8472 — bumped for legibility (v0.0.80) */
+  --ink-4: #847d6c;   /* was #5b5547 — same; eyebrows + secondary labels */
+  --ink-5: #5b5547;   /* was #423d33 — pushed up so meta is readable, not ghost */
 
   --border:        #2e2a22;
   --border-mid:    #423d33;
@@ -1969,8 +1969,10 @@ input, select, textarea {
   inset: 0;
   z-index: 9000;
   pointer-events: auto;
-  background: rgba(8, 10, 14, 0.55);
-  backdrop-filter: blur(1px);
+  /* Light tint instead of heavy dim so the dashboard stays legible
+     behind the coachmark. The spotlight ring around the focused
+     element does the visual work. */
+  background: rgba(8, 10, 14, 0.22);
   animation: tour-fade-in 160ms ease;
 }
 .tour-overlay[hidden] { display: none; }
@@ -2256,3 +2258,31 @@ input, select, textarea {
   font-family: var(--font-mono);
   font-size: 12.5px;
 }
+
+/* v0.0.80 — cluster explainer caption (renders above the frequency table) */
+.cluster-explainer {
+  background: rgba(224, 164, 88, 0.04);
+  border-left: 2px solid var(--amber, #e0a458);
+  padding: var(--s-3) var(--s-4);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2, #cabfa9);
+  border-radius: 0 4px 4px 0;
+  margin-bottom: var(--s-2);
+}
+.cluster-explainer strong {
+  color: var(--ink, #f5f0e3);
+  font-weight: 600;
+}
+
+/* v0.0.80 — tighten coachmark contrast against the lighter backdrop */
+.tour-coachmark {
+  background: #1c1f26;
+  border: 1px solid rgba(224, 164, 88, 0.45);
+  box-shadow:
+    0 14px 38px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+.tour-title  { color: var(--amber, #e0a458); }
+.tour-body   { color: #d8d2c0; }   /* was --ink-2 — bump for contrast on the dimmer card bg */
+.tour-progress { color: var(--ink-4, #847d6c); }
