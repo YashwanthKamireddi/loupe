@@ -631,10 +631,12 @@ function renderTrace() {
     <span class="pill">${dur}</span>
     ${annCount > 0 ? `<span class="pill amber">${annCount} tagged</span>` : ""}
     <span class="pill ${failed ? "failed" : "ok"}">${failed ? "failed" : "ok"}</span>
-    <button type="button" class="pill-action" id="export-md" title="Copy markdown report (e)">↗ Export</button>
   `;
-  const exportBtn = document.getElementById("export-md");
-  if (exportBtn) exportBtn.addEventListener("click", exportCurrentTraceMarkdown);
+  // The old "↗ Export" pill copied a markdown report to clipboard —
+  // a weak research artifact. Real exports happen via the CLI's
+  // canonical paths: `loupe export --format loupebench|otlp|parquet`
+  // (publishable JSONL / OTel / analytics). Keeping the dashboard
+  // pane focused on inspection, not on cmd-shaped buttons.
 
   els.viewer.innerHTML = "";
   els.viewer.appendChild(els.template.content.cloneNode(true));
@@ -1237,7 +1239,12 @@ function renderClusterBody(data) {
         <span class="cluster-meta">${data.in_category_count} annotation${data.in_category_count === 1 ? "" : "s"} · ${escapeHtml(cat)}</span>
       </h2>
       <table class="cluster-table">
-        <thead><tr><th>feature</th><th>hits</th><th>share</th><th>explanation</th></tr></thead>
+        <colgroup>
+          <col class="col-fid"><col class="col-hits"><col class="col-share"><col class="col-expl">
+        </colgroup>
+        <thead><tr>
+          <th>feature</th><th class="num">hits</th><th class="num">share</th><th>explanation</th>
+        </tr></thead>
         <tbody>${freqRows}</tbody>
       </table>
     </section>
@@ -1247,7 +1254,12 @@ function renderClusterBody(data) {
           <span class="cluster-meta">vs ${data.out_category_count} other-category annotation${data.out_category_count === 1 ? "" : "s"} · smoothed log-ratio</span>
         </h2>
         <table class="cluster-table">
-          <thead><tr><th>feature</th><th>in</th><th>out</th><th>score</th><th>explanation</th></tr></thead>
+          <colgroup>
+            <col class="col-fid"><col class="col-hits"><col class="col-hits"><col class="col-share"><col class="col-expl">
+          </colgroup>
+          <thead><tr>
+            <th>feature</th><th class="num">in</th><th class="num">out</th><th class="num">score</th><th>explanation</th>
+          </tr></thead>
           <tbody>${distRows}</tbody>
         </table>
       </section>

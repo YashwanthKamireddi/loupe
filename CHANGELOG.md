@@ -9,6 +9,40 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.79] — 2026-06-03  ·  **Dashboard polish: topbar alignment, cluster table density, killed the useless Export pill**
+
+Fast follow on v0.0.78 after seeing the cluster view in production
+screenshots — the design-system parity was off. This release fixes it.
+
+- **Topbar alignment** — the tour button was being inserted as a 4th
+  child of a 3-column grid, breaking the right-aligned cluster.
+  `meta-row` now wraps the meta pills + tour button as a single
+  right-aligned flex group so the topbar's three regions (brand /
+  stats / meta-row) line up cleanly.
+- **Tour button restyled** — pill shape matching the live indicator,
+  uppercase tracking, hover state in amber. Reads as a peer of the
+  live pill, not a stray rectangular button.
+- **Cluster view design-system pass** — title uses the same italic
+  serif Garamond as the rest of the eyebrows, table gets fixed-width
+  columns via `<colgroup>`, numeric columns right-align with tabular
+  numerals, row hover in amber. Score column uses the standard "good"
+  green, error path uses the standard "bad" red — no orphan palette.
+- **Killed the `↗ Export` pill on the trace summary** — it copied a
+  markdown report to the clipboard, which is the weakest possible
+  export artifact. The CLI's canonical paths cover real exports
+  (`loupe export --format loupebench|otlp|parquet`); the dashboard
+  pane is for inspection, not for shipping cmd-shaped buttons.
+- **Fixed the `test_dashboard_ships_no_tour_markup` test** that broke
+  in v0.0.78 when the opt-in tour came back. Renamed to
+  `test_dashboard_ships_opt_in_tour` with the new contract: the entry
+  button + overlay + coachmark must exist, but the tour must NOT
+  auto-launch (regression guard against the old gimmick).
+
+v0.0.78's `examples/gemma_local_demo.py` and the opt-in tour itself
+both stay. v0.0.78's release-workflow run failed at PyPI because of
+the now-fixed test; v0.0.79 is the first published version with the
+tour back.
+
 ## [0.0.78] — 2026-06-03  ·  **Dashboard tour returns (opt-in) + Gemma-2-2b local demo**
 
 - **Opt-in dashboard tour.** A small `tour` button in the topbar

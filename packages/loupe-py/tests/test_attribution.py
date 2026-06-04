@@ -422,23 +422,32 @@ def test_dashboard_style_css_contains_attribution_styles() -> None:
     assert ".attr-bar-fill" in css
 
 
-def test_dashboard_ships_no_tour_markup() -> None:
-    """Inverse of the original v0.0.59 contract — the guided tour was
-    removed in v0.0.68 (zombie code, distracting on first visit). This
-    test pins the removal so a regression that re-adds tour markup
-    would fail. The first-trace inline hint covers the same role
-    without the multi-step overlay UX."""
+def test_dashboard_ships_opt_in_tour() -> None:
+    """The dashboard ships an OPT-IN tour (v0.0.78+).
+
+    Earlier history: an auto-launching tour was stripped in v0.0.68 as
+    a gimmick (zombie code, distracting on first visit). v0.0.78 brings
+    it back behind a small topbar 'tour' button — never auto-launches,
+    never modal, ESC/skip/click-outside dismisses. This test pins the
+    new contract.
+    """
     from loupe.ui.server import STATIC_DIR
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
     js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 
-    assert 'id="tour"' not in html
-    assert 'id="tour-spot"' not in html
-    assert ".tour-backdrop" not in css
-    assert ".tour-card" not in css
-    assert "TOUR_STEPS" not in js
-    assert "startTour" not in js
+    # opt-in entry point (button), overlay container, and coachmark target
+    assert 'id="open-tour"' in html
+    assert 'id="tour-overlay"' in html
+    assert 'id="tour-coachmark"' in html
+    assert ".tour-overlay" in css
+    assert ".tour-coachmark" in css
+    assert "TOUR_STEPS" in js
+    # The old auto-launch behavior must not return: the overlay starts
+    # hidden, and there should be no startup call to _openTour().
+    assert "_openTour()" not in js or js.count("_openTour()") <= 0
+    # Tour must NOT auto-fire on DOMContentLoaded.
+    assert "DOMContentLoaded" not in js or "openTour" not in js.split("DOMContentLoaded")[-1][:500]
 
 
 def test_dashboard_ships_term_help_tooltips() -> None:
