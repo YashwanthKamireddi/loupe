@@ -9,6 +9,51 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.77] — 2026-06-03  ·  **Research-grade pivot: cluster view in dashboard + LoupeBench v0.1 grows**
+
+This is the start of Loupe's repositioning as **the open-source
+forensic + interpretability tool for the LLM-agent research community**
+(MATS scholars, Anthropic Fellows, Apollo Research, EleutherAI). The
+direct framing — "Loupe is what you reach for when you want SAE-level
+mechanistic answers about an agent failure" — supplants any attempt to
+compete with LangSmith on production observability.
+
+- **Cluster view in `loupe ui`** — a new `◇ Cluster` chip in the
+  sidebar opens a dashboard pane that runs `compute_cluster()` against
+  every tagged annotation: a *frequency* table (which SAE features fire
+  across many traces of a category) and a *distinctiveness* table
+  (features over-represented in a category vs every other category,
+  scored by smoothed log-ratio). Apollo Research explicitly asked for
+  this in their public [45-project-ideas
+  list](https://www.lesswrong.com/posts/KfkpgXdgRheSRWDy8/a-list-of-45-mech-interp-project-ideas-from-apollo-research)
+  ("Nice programming API to attribute an input to a collection of
+  paths … Web user interface? Maybe in collaboration with neuronpedia.").
+- **`compute_cluster()`** is now a public function in `loupe.attribution`
+  — the dashboard `/api/cluster` endpoint and the existing
+  `loupe cluster` CLI return the *exact same numbers*.
+- **LoupeBench v0.1 grew from 5 to 8 hand-annotated entries** with
+  three real-world failures captured + annotated this session:
+  - `lb-tool-hallucination-006`: Gemini agent had `calc` + `count_letters`
+    tools available, fabricated the entire ReAct loop including
+    invented OBSERVATIONs (count_letters returned "26" — real answer
+    is 27). Wrong final answer. Classic tool-hallucination, captured
+    end-to-end.
+  - `lb-rate-limit-007`: Real Gemini 2.5-flash 429 mid-agent run; full
+    `RetryInfo` payload preserved (`retry-after: 45.097s`, exact
+    `quotaMetric`) so the agent harness *could* recover. Real
+    production agents typically log just `RateLimitError` and lose
+    this signal.
+  - `lb-deprecated-model-008`: browser-use's default LLM pointed at
+    `gemini-2.0-flash-exp` which Google deprecated; 6 retries each
+    hitting the same 404. Loupe captured all 6 with the full
+    `models/<name> is not found for API version v1beta` body, so the
+    retry-storm is debuggable.
+- **`bench/CONTRIBUTING.md`** — entry schema + redaction guidance + a
+  citation block. Sets the bar for what makes a strong LoupeBench
+  contribution.
+
+No behavior changes to the core capture path. CLI surface unchanged.
+
 ## [0.0.76] — 2026-06-03  ·  **Two real bugs fixed by running on real third-party agents**
 
 Discovered by actually running Loupe end-to-end against the browser-use

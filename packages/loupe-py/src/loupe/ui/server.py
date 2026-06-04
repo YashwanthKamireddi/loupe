@@ -128,6 +128,22 @@ def create_app() -> FastAPI:
             }
         )
 
+    @app.get("/api/cluster")
+    def cluster_endpoint(category: str = "", top_k: int = 15) -> JSONResponse:
+        """Shared-feature analysis across tagged failures.
+
+        Powers the dashboard "Cluster" view — finds SAE features that recur
+        across many annotated steps and (when ``category`` is set) features
+        that are *distinctive* to that category vs every other tagged
+        failure.
+
+        Identical numbers to ``loupe cluster --category X`` from the CLI.
+        """
+        from loupe.attribution import compute_cluster
+        cap_top_k = max(1, min(int(top_k or 15), 100))
+        result = compute_cluster(category=category or None, top_k=cap_top_k)
+        return JSONResponse(result)
+
     @app.get("/api/stats")
     def stats() -> JSONResponse:
         files = list(traces_dir().glob("*.jsonl"))

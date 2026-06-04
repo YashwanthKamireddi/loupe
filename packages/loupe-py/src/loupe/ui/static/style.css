@@ -1819,3 +1819,123 @@ input, select, textarea {
      widening the page. */
   .timeline, .timeline-wrap { overflow-x: auto; }
 }
+
+/* =========================================================================
+ * Cluster view — research-grade shared-feature analysis surface.
+ * Reachable via the ◇ Cluster chip in the sidebar filter bar.
+ * ========================================================================= */
+.filter-chip-cluster {
+  margin-left: auto;
+  border-color: var(--c-amber-soft);
+  color: var(--c-amber);
+}
+.filter-chip-cluster.active { background: var(--c-amber-soft-bg, rgba(224,164,88,0.12)); }
+
+.cluster-view {
+  padding: var(--s-5) var(--s-5) var(--s-7);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.cluster-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--c-line);
+  margin-bottom: var(--s-5);
+}
+.cluster-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--c-ink);
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+.cluster-mark { color: var(--c-amber); }
+.cluster-sub  { font-size: 13px; font-weight: 400; color: var(--c-dim-2); margin-left: var(--s-2); }
+
+.cluster-controls { display: flex; align-items: center; gap: var(--s-3); }
+.cluster-cat-label { display: flex; gap: var(--s-2); align-items: center; font-size: 12px; color: var(--c-dim); }
+.cluster-cat-label input {
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-radius: 4px;
+  color: var(--c-ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 180px;
+}
+.cluster-btn {
+  background: var(--c-amber);
+  color: #1a1410;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cluster-btn:hover { filter: brightness(1.08); }
+
+.cluster-body { display: flex; flex-direction: column; gap: var(--s-6); }
+.cluster-loading, .cluster-empty {
+  color: var(--c-dim);
+  font-style: italic;
+  text-align: center;
+  padding: var(--s-7) 0;
+}
+.cluster-empty code {
+  background: var(--c-panel);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+}
+.cluster-section { display: flex; flex-direction: column; gap: var(--s-3); }
+.cluster-h2 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+.cluster-meta { font-size: 11px; font-weight: 400; color: var(--c-dim-2); text-transform: none; letter-spacing: 0; }
+
+.cluster-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.cluster-table thead th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--c-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--c-line);
+}
+.cluster-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--c-ink);
+  vertical-align: top;
+}
+.cluster-table .fid    { color: var(--c-amber); font-weight: 600; }
+.cluster-table .hits   { color: var(--c-ink);   font-variant-numeric: tabular-nums; }
+.cluster-table .share  { color: var(--c-dim);   font-variant-numeric: tabular-nums; }
+.cluster-table .hits-out { color: var(--c-dim); font-variant-numeric: tabular-nums; }
+.cluster-table .score  { color: var(--c-green, #7ea96b); font-variant-numeric: tabular-nums; font-weight: 600; }
+.cluster-table .expl   { color: var(--c-ink-2); }
+
+.cluster-error { color: var(--c-red); padding: var(--s-5); font-family: var(--font-mono); }

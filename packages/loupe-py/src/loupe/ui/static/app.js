@@ -1143,15 +1143,131 @@ els.search.addEventListener("input", (e) => {
   }, 200);
 });
 
-// Status filter chips
-els.filterBar?.querySelectorAll(".filter-chip").forEach((btn) => {
+// Status filter chips (skip the cluster button — it has no data-filter)
+els.filterBar?.querySelectorAll(".filter-chip[data-filter]").forEach((btn) => {
   btn.addEventListener("click", () => {
     state.statusFilter = btn.dataset.filter;
-    els.filterBar.querySelectorAll(".filter-chip").forEach((b) => {
+    els.filterBar.querySelectorAll(".filter-chip[data-filter]").forEach((b) => {
       b.classList.toggle("active", b === btn);
     });
     renderTraceList();
   });
+});
+
+// Cluster view: shared-feature analysis across tagged failures.
+// Lives in the viewer pane (not the sidebar) since it's an N-trace
+// aggregate, not a single case file.
+async function openClusterView(category = "") {
+  const viewer = document.getElementById("viewer");
+  if (!viewer) return;
+  viewer.innerHTML = `
+    <article class="cluster-view">
+      <header class="cluster-h">
+        <h1 class="cluster-title">
+          <span class="cluster-mark">◇</span> Cluster
+          <span class="cluster-sub">shared-feature analysis across tagged failures</span>
+        </h1>
+        <div class="cluster-controls">
+          <label class="cluster-cat-label">category
+            <input id="cluster-cat" type="text" value="${escapeHtml(category)}"
+                   placeholder="all" autocomplete="off" />
+          </label>
+          <button id="cluster-refresh" type="button" class="cluster-btn">refresh</button>
+        </div>
+      </header>
+      <div id="cluster-body" class="cluster-body">
+        <p class="cluster-loading">computing…</p>
+      </div>
+    </article>
+  `;
+
+  const refresh = async () => {
+    const cat = (document.getElementById("cluster-cat")?.value || "").trim();
+    const body = document.getElementById("cluster-body");
+    if (body) body.innerHTML = '<p class="cluster-loading">computing…</p>';
+    try {
+      const q = cat ? `?category=${encodeURIComponent(cat)}&top_k=20` : `?top_k=20`;
+      const res = await fetch(`/api/cluster${q}`);
+      const data = await res.json();
+      renderClusterBody(data);
+    } catch (e) {
+      if (body) body.innerHTML = `<p class="cluster-error">error: ${escapeHtml(String(e))}</p>`;
+    }
+  };
+
+  document.getElementById("cluster-refresh")?.addEventListener("click", refresh);
+  document.getElementById("cluster-cat")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") refresh();
+  });
+  await refresh();
+}
+
+function renderClusterBody(data) {
+  const body = document.getElementById("cluster-body");
+  if (!body) return;
+  const cat = data.category || "(all categories)";
+  if (data.in_category_count === 0) {
+    body.innerHTML = `
+      <p class="cluster-empty">
+        No annotated steps in ${escapeHtml(cat)} with circuit attribution yet.
+        Tag a failing step and run <code>loupe attribute &lt;trace&gt; --backend sae</code>
+        to populate this view.
+      </p>`;
+    return;
+  }
+  const freqRows = (data.frequency || []).map((f) => `
+    <tr>
+      <td class="fid">#${f.feature_id}</td>
+      <td class="hits">${f.hits}</td>
+      <td class="share">${Math.round((f.share || 0) * 100)}%</td>
+      <td class="expl">${escapeHtml(f.explanation || "")}</td>
+    </tr>`).join("");
+  const distRows = (data.distinctive || []).map((f) => `
+    <tr>
+      <td class="fid">#${f.feature_id}</td>
+      <td class="hits">${f.hits_in}</td>
+      <td class="hits-out">${f.hits_out}</td>
+      <td class="score">+${(f.score || 0).toFixed(2)}</td>
+      <td class="expl">${escapeHtml(f.explanation || "")}</td>
+    </tr>`).join("");
+
+  body.innerHTML = `
+    <section class="cluster-section">
+      <h2 class="cluster-h2">frequency
+        <span class="cluster-meta">${data.in_category_count} annotation${data.in_category_count === 1 ? "" : "s"} · ${escapeHtml(cat)}</span>
+      </h2>
+      <table class="cluster-table">
+        <thead><tr><th>feature</th><th>hits</th><th>share</th><th>explanation</th></tr></thead>
+        <tbody>${freqRows}</tbody>
+      </table>
+    </section>
+    ${distRows ? `
+      <section class="cluster-section">
+        <h2 class="cluster-h2">distinctive
+          <span class="cluster-meta">vs ${data.out_category_count} other-category annotation${data.out_category_count === 1 ? "" : "s"} · smoothed log-ratio</span>
+        </h2>
+        <table class="cluster-table">
+          <thead><tr><th>feature</th><th>in</th><th>out</th><th>score</th><th>explanation</th></tr></thead>
+          <tbody>${distRows}</tbody>
+        </table>
+      </section>
+    ` : ""}
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+document.getElementById("open-cluster-view")?.addEventListener("click", () => {
+  document.getElementById("open-cluster-view")?.classList.add("active");
+  document.querySelectorAll(".filter-chip[data-filter]").forEach((b) => b.classList.remove("active"));
+  openClusterView();
 });
 
 /* ----- live updates via SSE --------------------------------------------- */

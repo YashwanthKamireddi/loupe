@@ -529,6 +529,117 @@ def attribute_trace(
     return results
 
 
+def compute_cluster(
+    *,
+    category: str | None = None,
+    top_k: int = 15,
+) -> dict[str, Any]:
+    """Cluster captured failures by SAE-feature co-occurrence.
+
+    This is the analytical primitive of the LoupeBench research workflow.
+    Extracted from the ``loupe cluster`` CLI so the dashboard ``/api/cluster``
+    endpoint can return the exact same numbers as a JSON payload.
+
+    Returns a dict::
+
+        {
+          "in_category_count":  N,
+          "out_category_count": N,
+          "frequency": [
+            {"feature_id": …, "hits": N, "share": 0.0-1.0, "explanation": …},
+            …
+          ],
+          "distinctive": [   # only populated when ``category`` is set
+            {"feature_id": …, "hits_in": N, "hits_out": N,
+             "score": float, "explanation": …},
+            …
+          ],
+        }
+
+    ``score`` is a smoothed log-ratio of in-category rate vs
+    out-of-category rate; >0 means over-represented in this category.
+    """
+    import math
+    from collections import Counter
+
+    from loupe.annotation import AnnotationStore
+
+    store = AnnotationStore()
+    rows: list[tuple[str, list[int], dict[int, str]]] = []
+    for _trace_id, items in store.all().items():
+        for ann in items:
+            attr = ann.circuit_attribution or {}
+            feats = attr.get("top_features", []) if isinstance(attr, dict) else []
+            if not feats:
+                continue
+            ids: list[int] = []
+            explanations: dict[int, str] = {}
+            for f in feats:
+                if isinstance(f, dict) and "feature_id" in f:
+                    fid = int(f["feature_id"])
+                    ids.append(fid)
+                    expl = f.get("description") or f.get("explanation") or ""
+                    if expl:
+                        explanations[fid] = str(expl)
+            if ids:
+                rows.append((ann.failure_category, ids, explanations))
+
+    if category:
+        in_rows = [r for r in rows if r[0] == category]
+        out_rows = [r for r in rows if r[0] != category]
+    else:
+        in_rows = rows
+        out_rows = []
+
+    in_counter: Counter[int] = Counter()
+    explanations: dict[int, str] = {}
+    for _cat, ids, expls in in_rows:
+        for fid in ids:
+            in_counter[fid] += 1
+        explanations.update(expls)
+
+    frequency = [
+        {
+            "feature_id": fid,
+            "hits": hits,
+            "share": hits / max(1, len(in_rows)),
+            "explanation": explanations.get(fid, ""),
+        }
+        for fid, hits in in_counter.most_common(top_k)
+    ]
+
+    distinctive: list[dict[str, Any]] = []
+    if category and out_rows:
+        out_counter: Counter[int] = Counter()
+        for _cat, ids, _expls in out_rows:
+            for fid in ids:
+                out_counter[fid] += 1
+        scored: list[tuple[int, float, int, int]] = []
+        for fid, hits in in_counter.items():
+            in_rate = (hits + 1) / (len(in_rows) + 1)
+            out_rate = (out_counter.get(fid, 0) + 1) / (len(out_rows) + 1)
+            scored.append((fid, math.log(in_rate / out_rate), hits, out_counter.get(fid, 0)))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        for fid, score, hits_in, hits_out in scored[:top_k]:
+            if score <= 0:
+                break
+            distinctive.append({
+                "feature_id": fid,
+                "hits_in": hits_in,
+                "hits_out": hits_out,
+                "score": round(score, 4),
+                "explanation": explanations.get(fid, ""),
+            })
+
+    return {
+        "in_category_count": len(in_rows),
+        "out_category_count": len(out_rows),
+        "category": category or None,
+        "frequency": frequency,
+        "distinctive": distinctive,
+    }
+
+
 def _extract_prompt(inputs: dict[str, Any]) -> str:
     """Best-effort: turn an llm-call step's inputs into a single prompt string.
 
