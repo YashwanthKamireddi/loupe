@@ -9,6 +9,29 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.81] — 2026-06-03  ·  **Tour-button visibility, cluster breathing room, page-flash fix**
+
+Third-pass screenshot review. Targeted fixes:
+
+- **Tour `next →` button visibility** — was rendering as a faded amber
+  pill (the global `filter: brightness(1.08)` on hover conflicted
+  with the dark-on-amber styling). Now an explicit solid amber fill
+  with `#1a1410` text, dedicated `:hover` / `:active` / `:focus-visible`
+  states, no transform, no filter, no border bleed. Reads as a real
+  primary button.
+- **Tour `skip` button** restyled to match — ghost-outlined pill that
+  pairs visually with the next button.
+- **Cluster table breathing room** — row padding bumped from 9px×14px
+  to 13px×16px; section gap from 28px to 40px; explainer caption gets
+  proper line-height + side padding. No longer feels cramped.
+- **Cluster pane fills the viewer** — `min-height` of the viewer
+  height; `max-width: 1180px` so wide screens center it without
+  stretching tables to absurd widths.
+- **Page-load flash fix** — viewer pane gets a 200ms opacity fade
+  starting at 80ms (just long enough for the first trace auto-open
+  to settle), so the empty-state stops flashing into a trace on
+  refresh.
+
 ## [0.0.80] — 2026-06-03  ·  **Dashboard contrast + de-duplicated timeline + LIVE pill repositioned**
 
 Direct response to the screenshot review:

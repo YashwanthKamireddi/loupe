@@ -2286,3 +2286,79 @@ input, select, textarea {
 .tour-title  { color: var(--amber, #e0a458); }
 .tour-body   { color: #d8d2c0; }   /* was --ink-2 — bump for contrast on the dimmer card bg */
 .tour-progress { color: var(--ink-4, #847d6c); }
+
+/* =========================================================================
+ * v0.0.81 — fix tour next-button visibility, cluster breathing room,
+ * and the brief page-load flash before the first trace auto-opens.
+ * ========================================================================= */
+
+/* Tour: solid filled amber for the next-button, explicit hover/active
+   states with NO transform (avoid border-radius bleed). */
+.tour-next {
+  background: var(--amber, #e0a458);
+  color: #1a1410;
+  border: 1px solid var(--amber, #e0a458);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 6px 14px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.tour-next:hover {
+  background: #f0c080;
+  border-color: #f0c080;
+  filter: none;       /* override the global brighten */
+}
+.tour-next:active { background: #cf9347; }
+.tour-next:focus-visible {
+  outline: 2px solid var(--amber, #e0a458);
+  outline-offset: 2px;
+}
+
+.tour-skip {
+  background: transparent;
+  color: var(--ink-3, #b4ac98);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+}
+.tour-skip:hover  { color: var(--ink, #f5f0e3); border-color: rgba(255,255,255,0.20); }
+
+/* Cluster — more breathing room, centered, fills the viewer pane */
+.cluster-view {
+  padding: clamp(28px, 4vw, 56px) clamp(20px, 5vw, 80px);
+  max-width: 1180px;
+  min-height: calc(100vh - var(--topbar-h, 60px));
+  box-sizing: border-box;
+}
+.cluster-h {
+  padding-bottom: 18px;
+  margin-bottom: 28px;
+}
+.cluster-explainer {
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  line-height: 1.6;
+}
+.cluster-section { gap: 14px; }
+.cluster-body    { gap: 40px; }
+
+/* Table — taller rows + a bit more horizontal padding for legibility */
+.cluster-table thead th { padding: 14px 16px; font-size: 10.5px; }
+.cluster-table tbody td { padding: 13px 16px; line-height: 1.5; }
+
+/* Kill the page-load FOUC: hide the viewer until the trace list has
+   loaded and the auto-open completes. The fade-in is fast enough to be
+   invisible but stops the empty-state from flashing into a trace.    */
+.viewer { animation: viewer-fade 200ms ease 80ms both; }
+@keyframes viewer-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
