@@ -1982,15 +1982,22 @@ input, select, textarea {
   to   { opacity: 1; }
 }
 
+/* v0.0.82 — spotlight ring is now a CONTAINED ::after overlay, not a
+   box-shadow. The old shadow extended past the target's bounds and
+   appeared as a horizontal amber line across the full dashboard when
+   the target was a wide pane (.viewer or .layout). */
 .tour-spotlight {
   position: relative;
   z-index: 9001;
-  box-shadow:
-    0 0 0 2px var(--c-amber, #e0a458),
-    0 0 0 8px rgba(224, 164, 88, 0.18),
-    0 0 24px rgba(224, 164, 88, 0.35);
+}
+.tour-spotlight::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid var(--amber, #e0a458);
   border-radius: 6px;
-  transition: box-shadow 160ms;
+  pointer-events: none;
+  box-shadow: 0 0 16px rgba(224, 164, 88, 0.30);
 }
 
 .tour-coachmark {

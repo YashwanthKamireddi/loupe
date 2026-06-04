@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # `loupe` (see [tool.hatch...packages] and [project.scripts]); only the
 # pip-install name is `loupe-ai` because `loupe` was already taken.
 name = "loupe-ai"
-version = "0.0.81"
+version = "0.0.82"
 description = "A magnifying glass for your AI agent — open-source forensics + interpretability for LLM agents."
 readme = "README.md"
 requires-python = ">=3.11"

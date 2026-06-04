@@ -1436,17 +1436,17 @@ document.addEventListener("keydown", (e) => {
  * ========================================================================= */
 const TOUR_STEPS = [
   {
-    sel: ".sidebar",
+    sel: "#trace-list",
     title: "Case files",
     body: "Every captured agent run lands here. Click one to see its steps + evidence.",
   },
   {
     sel: "#filter-bar",
     title: "Filter + Cluster",
-    body: "Filter by status. The ◇ Cluster chip on the right opens shared-feature analysis across all your tagged failures — the LoupeBench analytical primitive.",
+    body: "Filter by status. The ◇ Cluster chip opens shared-feature analysis across all your tagged failures — the LoupeBench analytical primitive.",
   },
   {
-    sel: ".viewer",
+    sel: ".pane-detail",
     title: "Evidence pane",
     body: "Click any step → full prompt, full reply, latency, tokens, errors, and (after `loupe attribute`) the top SAE features that fired.",
   },
@@ -1461,6 +1461,15 @@ const TOUR_STEPS = [
     body: "Captured cost + activity sparkline. Hidden until you've captured a few runs with known model prices.",
   },
 ];
+
+function _clearAllSpotlights() {
+  // Belt-and-suspenders: every step nav + close + ESC scrubs every
+  // .tour-spotlight in the DOM. The earlier bug was a leftover ring
+  // because the class wasn't always cleared. This guarantees it is.
+  document.querySelectorAll(".tour-spotlight").forEach((el) =>
+    el.classList.remove("tour-spotlight"),
+  );
+}
 
 let _tourIdx = 0;
 
@@ -1501,10 +1510,9 @@ function _renderTourStep() {
     `${_tourIdx + 1} / ${TOUR_STEPS.length}`;
   const nextBtn = document.getElementById("tour-next");
   nextBtn.textContent = _tourIdx === TOUR_STEPS.length - 1 ? "done" : "next →";
-  // Highlight + position
-  document.querySelectorAll(".tour-spotlight").forEach((el) =>
-    el.classList.remove("tour-spotlight"),
-  );
+  // Highlight + position. Always clear FIRST so the previous step's
+  // ring is fully gone before the new one paints.
+  _clearAllSpotlights();
   const target = document.querySelector(step.sel);
   if (target) target.classList.add("tour-spotlight");
   _positionCoachmark(target);
@@ -1521,12 +1529,14 @@ function _openTour() {
 
 function _closeTour() {
   const overlay = document.getElementById("tour-overlay");
-  if (!overlay) return;
-  overlay.hidden = true;
-  overlay.setAttribute("aria-hidden", "true");
-  document.querySelectorAll(".tour-spotlight").forEach((el) =>
-    el.classList.remove("tour-spotlight"),
-  );
+  if (overlay) {
+    overlay.hidden = true;
+    overlay.setAttribute("aria-hidden", "true");
+  }
+  _clearAllSpotlights();
+  // Defensive: schedule a second sweep in case anything async re-added
+  // a spotlight class while we were tearing down.
+  setTimeout(_clearAllSpotlights, 30);
 }
 
 document.getElementById("open-tour")?.addEventListener("click", _openTour);

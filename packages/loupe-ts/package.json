@@ -1,6 +1,6 @@
 {
   "name": "loupe-ai",
-  "version": "0.0.81",
+  "version": "0.0.82",
   "description": "A magnifying glass for your AI agent — TypeScript SDK.",
   "license": "MIT",
   "author": "Yashwanth Kamireddi",

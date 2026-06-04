@@ -9,6 +9,31 @@ All notable changes to Loupe. Loupe follows [SemVer](https://semver.org/).
 - Phase C: multi-trace bulk operations in the dashboard
 - Phase D: time-series cost + activity view in the dashboard
 
+## [0.0.82] — 2026-06-03  ·  **Tour spotlight contained — no more amber bleed across the dashboard**
+
+The spotlight ring around a tour-highlighted element was rendered as a
+giant `box-shadow` (`0 0 0 2px amber, 0 0 0 8px amber-tint, 0 0 24px glow`).
+When the target was a wide element like `.viewer` (1500+ px), the shadow
+drew an amber horizontal line across the full dashboard, leaking into
+the topbar area. Two compounding bugs:
+
+1. **Ring geometry.** Replaced the box-shadow-based ring with a contained
+   `::after` pseudo-element at `inset: -3px` — physically can't extend
+   beyond the target's bounds by more than 3 pixels. Glow stays inside.
+2. **Cleanup race.** The previous step's spotlight class was removed
+   only by `_renderTourStep` (next-step paint). On close-via-ESC during
+   a transition the class could persist. Cleanup is now belt-and-suspenders:
+   `_clearAllSpotlights()` runs (a) before every step nav, (b) on close,
+   (c) again 30ms after close to catch async re-adds.
+3. **Tighter target selectors.** Dropped `.viewer` (the full right
+   pane) from the tour-step list — replaced with `.pane-detail` (the
+   inner evidence card). `.sidebar` swapped for `#trace-list`. Targets
+   are now compact, ringing wraps the actual interesting element.
+
+If the spotlight feels off in your next screenshot, it's a positioning
+bug worth a separate ticket — but the bleed-across-the-dashboard
+artifact you flagged is dead.
+
 ## [0.0.81] — 2026-06-03  ·  **Tour-button visibility, cluster breathing room, page-flash fix**
 
 Third-pass screenshot review. Targeted fixes:
