@@ -61,3 +61,4 @@ packages/loupe-ts/node_modules/
 packages/loupe-ts/dist/
 packages/loupe-ts/.turbo/
 packages/loupe-ts/*.tsbuildinfo
+.hypothesis/

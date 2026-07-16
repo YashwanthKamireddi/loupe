@@ -11,7 +11,7 @@ Captures every LLM call your code makes — *zero* code changes — and tells yo
 [![npm](https://img.shields.io/npm/v/loupe-ai?label=loupe-ai&color=e0a458)](https://www.npmjs.com/package/loupe-ai)
 [![CI](https://github.com/YashwanthKamireddi/loupe/actions/workflows/ci.yml/badge.svg)](https://github.com/YashwanthKamireddi/loupe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-596%20passing-success.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-597%20passing-success.svg)](#)
 
 </div>
 
@@ -203,7 +203,7 @@ Run `loupe --help` for the full surface; `loupe explain <topic>` for any concept
 
 ## Releasing
 
-Every `v*.*.*` tag fires a workflow that runs the full gauntlet (596 Python + 44 TS tests, version-parity, tag↔package match) and publishes to **both** registries with signed provenance. See [`RELEASING.md`](RELEASING.md).
+Every `v*.*.*` tag fires a workflow that runs the full gauntlet (597 Python + 44 TS tests, version-parity, tag↔package match) and publishes to **both** registries with signed provenance. See [`RELEASING.md`](RELEASING.md).
 
 ## Roadmap
 

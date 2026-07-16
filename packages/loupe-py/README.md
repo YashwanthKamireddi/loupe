@@ -1,14 +1,17 @@
-# `loupe` — Python SDK
+# `loupe-ai` — Python SDK
 
-Forensic observability + circuit attribution for Python LLM agents.
+Forensic observability + circuit attribution for Python LLM agents. Zero-code capture of every LLM call to append-only JSONL traces, with a local dashboard, TUI, and SAE-based interpretability on top.
 
 ## Install
 
 ```bash
-pip install -e '.[ui]'           # from this repo (canonical install today)
-pip install -e '.[interp]'       # adds the real SAE attribution backend
-pip install -e '.[ui,interp,langgraph,anthropic,openai,universal]'
+pip install loupe-ai                  # CLI + dashboard + httpx capture, batteries included
+pip install 'loupe-ai[interp]'        # adds the real SAE attribution backend (~150MB)
+pip install 'loupe-ai[langgraph]'     # framework SDK extras: langgraph, anthropic, openai,
+                                      # pydantic-ai, llama-index, dspy, crewai, autogen, openhands
 ```
+
+From a clone of the repo: `pip install -e '.[dev]'`.
 
 ## Quickstart
 
@@ -38,5 +41,5 @@ loupe cluster         # find features that recur across tagged failures
 loupe replay <id>     # re-invoke a captured run for reproducibility testing
 ```
 
-See [SPEC.md](../../docs/SPEC.md) for the wire format and
-[ARCHITECTURE.md](../../docs/ARCHITECTURE.md) for the layering.
+See [SPEC.md](https://github.com/YashwanthKamireddi/loupe/blob/main/docs/SPEC.md) for the wire format and
+[ARCHITECTURE.md](https://github.com/YashwanthKamireddi/loupe/blob/main/docs/ARCHITECTURE.md) for the layering.

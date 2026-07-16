@@ -24,7 +24,7 @@ Capture primitives:
     :func:`trace`, :func:`record_step`, :class:`Trace`, :class:`Step`,
     :func:`current_trace`, :class:`Store`.
 
-Circuit attribution (v0.2):
+Circuit attribution:
     :class:`AttributionResult`, :class:`FeatureActivation`,
     :class:`Attributor` (Protocol), :class:`MockAttributor`,
     :class:`SAEAttributor`, :func:`make_attributor`, :func:`attribute_trace`.

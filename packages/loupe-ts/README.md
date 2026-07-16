@@ -1,16 +1,15 @@
-# `@loupe/sdk` — TypeScript SDK
+# `loupe-ai` — TypeScript SDK
 
-A magnifying glass for your AI agent. **TypeScript counterpart of the [Python `loupe`](../loupe-py) package** — same wire format, same `~/.loupe/traces/` directory, same `loupe ui` dashboard.
+A magnifying glass for your AI agent. **TypeScript counterpart of the [Python `loupe-ai`](https://pypi.org/project/loupe-ai/) package** — same wire format, same `~/.loupe/traces/` directory, same `loupe ui` dashboard.
 
 ```bash
-# from this repo (canonical install today):
-cd packages/loupe-ts && npm install && npm run build
+npm install loupe-ai
 ```
 
 ## Quickstart
 
 ```typescript
-import { trace, recordStep } from "@loupe/sdk";
+import { trace, recordStep } from "loupe-ai";
 
 const myAgent = trace({ framework: "ai-sdk" }, async (q: string) => {
   recordStep("thought", "plan", { outputs: { plan: "..." } });
@@ -24,7 +23,7 @@ await myAgent("refactor auth.ts");
 Then in another terminal:
 
 ```bash
-pip install 'loupe[ui]'
+pip install loupe-ai
 loupe ui   # forensic dashboard shows your TS trace
 ```
 
@@ -33,8 +32,8 @@ loupe ui   # forensic dashboard shows your TS trace
 ```typescript
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { trace } from "@loupe/sdk";
-import { wrapModel } from "@loupe/sdk/ai-sdk";
+import { trace } from "loupe-ai";
+import { wrapModel } from "loupe-ai/ai-sdk";
 
 const model = wrapModel(anthropic("claude-sonnet-4-6"));
 
@@ -48,7 +47,7 @@ Or middleware-style:
 
 ```typescript
 import { wrapLanguageModel } from "ai";
-import { loupeMiddleware } from "@loupe/sdk/ai-sdk";
+import { loupeMiddleware } from "loupe-ai/ai-sdk";
 
 const model = wrapLanguageModel({
   model: anthropic("claude-sonnet-4-6"),
@@ -56,12 +55,19 @@ const model = wrapLanguageModel({
 });
 ```
 
-## Dev setup
+## Zero-code capture
+
+No imports at all — preload the autopatch hook and every supported SDK call in the process is traced:
+
+```bash
+NODE_OPTIONS="--require loupe-ai/autopatch" node agent.js
+```
+
+## Dev setup (from the repo)
 
 ```bash
 cd packages/loupe-ts
 npm install
 npm test          # vitest
 npm run build     # tsup → dist/
-npm run example:hello
 ```
